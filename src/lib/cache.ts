@@ -22,14 +22,14 @@ export function createCachedQuery<T>(
   keyParts: string[],
   revalidate: number = 300 // 5 minutes default
 ) {
-  return unstable_cache(
-    queryFn,
-    keyParts,
-    {
-      revalidate,
-      tags: keyParts,
-    }
-  );
+  if (process.env.ENABLE_SHARED_QUERY_CACHE !== 'true') {
+    return queryFn;
+  }
+
+  return unstable_cache(queryFn, keyParts, {
+    revalidate,
+    tags: keyParts,
+  });
 }
 
 /**

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getBranchComparisonData } from '@/lib/data/comparison';
 import { formatErrorResponse, logError } from '@/lib/errors';
+import { getAuthorizedBranches } from '@/lib/api-branch-auth';
 
 export async function GET(request: Request) {
   try {
@@ -14,6 +15,7 @@ export async function GET(request: Request) {
     } else if (branches.length === 1 && branches[0].includes(',')) {
       branches = branches[0].split(',');
     }
+    branches = await getAuthorizedBranches(searchParams);
 
     const data = await getBranchComparisonData(startDate, endDate, branches);
 

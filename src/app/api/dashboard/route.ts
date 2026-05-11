@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDashboardKPIs, getRecentSales, getDashboardAlerts } from '@/lib/data/dashboard';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 import { formatErrorResponse, logError } from '@/lib/errors';
+import { getAuthorizedBranches } from '@/lib/api-branch-auth';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,6 +23,7 @@ export async function GET(request: NextRequest) {
     } else if (branches.length === 1 && branches[0].includes(',')) {
       normalizedBranches = branches[0].split(',');
     }
+    normalizedBranches = await getAuthorizedBranches(new URLSearchParams(searchParams));
 
     const dateRange = startDate && endDate ? { start: startDate, end: endDate } : undefined;
 

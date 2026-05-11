@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { ReactNode, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { KPIDetailModal, type KPIDetailActionButton, type KPIDetailItem } from '@/components/KPIDetailModal';
+import { useAdminStatus } from '@/hooks/useAdminStatus';
 
 interface QueryInfo {
     query: string;
@@ -42,13 +43,7 @@ function QueryModal({
     title: string; 
     queryInfo: QueryInfo;
 }) {
-    const [mounted, setMounted] = useState(false);
     const [copied, setCopied] = useState(false);
-
-    useEffect(() => {
-        setMounted(true);
-        return () => setMounted(false);
-    }, []);
 
     useEffect(() => {
         if (isOpen) {
@@ -71,7 +66,7 @@ function QueryModal({
         }
     };
 
-    if (!mounted || !isOpen) return null;
+    if (!isOpen || typeof document === 'undefined') return null;
 
     return createPortal(
         <div className="fixed inset-0 z-[9999]">
@@ -187,15 +182,17 @@ export function KPICard({
     detailActionButton,
     expandHref,
 }: KPICardProps) {
+    const isAdmin = useAdminStatus();
     const [showQueryPopup, setShowQueryPopup] = useState(false);
     const [showDetailPopup, setShowDetailPopup] = useState(false);
 
     const isCardClickable = true;
+    const canViewQuery = Boolean(queryInfo && isAdmin);
 
     const openPopup = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (queryInfo) {
+        if (canViewQuery) {
             setShowQueryPopup(true);
         }
     };
@@ -236,7 +233,7 @@ export function KPICard({
                 aria-label={`ดูรายละเอียด ${title}`}
             >
                 {/* Query Info Button - Top Right Corner */}
-                {queryInfo && (
+                {canViewQuery && (
                     <button
                         type="button"
                         className="absolute bottom-3 right-3 p-2 rounded-lg bg-[hsl(var(--muted))]/50 hover:bg-[hsl(var(--muted))] opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer z-10"
@@ -300,7 +297,7 @@ export function KPICard({
             </div>
 
             {/* Query Info Modal - rendered via Portal */}
-            {queryInfo && (
+            {canViewQuery && queryInfo && (
                 <QueryModal
                     isOpen={showQueryPopup}
                     onClose={closePopup}

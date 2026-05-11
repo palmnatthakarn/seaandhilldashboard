@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,7 +8,6 @@ import {
     LayoutDashboard,
     ShoppingCart,
     Package,
-    Users,
     Settings,
     LogOut,
     ChevronRight,
@@ -18,14 +17,13 @@ import {
     Calculator,
     FileText,
     TrendingUp,
-    Wallet,
     BarChart3,
     ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/lib/SidebarContext';
 import { useComparison } from '@/lib/ComparisonContext';
-// auth-client removed temporarily — will be added back when auth system is ready
+import { signOut, useSession } from '@/lib/auth-client';
 
 const menuItems = [
     { name: 'ภาพรวม', icon: LayoutDashboard, href: '/' },
@@ -75,15 +73,50 @@ const itemVariants = {
     visible: { opacity: 1, x: 0, transition: { type: 'spring' as const, bounce: 0, duration: 0.4 } }
 };
 
+function getInitials(name: string, email: string) {
+    const source = name.trim() || email.split('@')[0] || 'User';
+    const words = source.split(/\s+/).filter(Boolean);
+
+    if (words.length >= 2) {
+        return `${words[0][0]}${words[1][0]}`.toUpperCase();
+    }
+
+    return source.substring(0, 2).toUpperCase();
+}
+
 export function Sidebar() {
-    const displayName = 'Admin User';
-    const displayEmail = 'admin@company.com';
-    const displayInitials = displayName.substring(0, 2).toUpperCase();
+    const { data: session } = useSession();
+    const user = session?.user;
+    const displayEmail = user?.email ?? '';
+    const displayName = user?.name || displayEmail.split('@')[0] || 'User';
+    const displayInitials = getInitials(displayName, displayEmail);
     const pathname = usePathname();
     const router = useRouter();
     const { isCollapsed, toggleSidebar, isMobileSidebarOpen, closeMobileSidebar, setIsCollapsed } = useSidebar();
     const { isComparisonMode } = useComparison();
     const [isReportOpen, setIsReportOpen] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+
+        fetch('/api/admin/me')
+            .then((response) => response.ok ? response.json() : null)
+            .then((json) => {
+                if (active) {
+                    setIsAdmin(Boolean(json?.data?.isAdmin));
+                }
+            })
+            .catch(() => {
+                if (active) {
+                    setIsAdmin(false);
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [displayEmail]);
 
     // Check if any report submenu is active
     const isReportActive = reportMenu.subItems.some(item => pathname.startsWith(item.href));
@@ -106,8 +139,14 @@ export function Sidebar() {
         }
     };
 
-    const handleSignOut = () => {
-        window.location.href = '/login';
+    const handleSignOut = async () => {
+        await signOut({
+            fetchOptions: {
+                onSuccess: () => {
+                    window.location.href = '/login';
+                },
+            },
+        });
     };
 
     // On mobile drawer, always show full content regardless of collapsed state
@@ -294,7 +333,7 @@ export function Sidebar() {
                         initial="hidden"
                         animate="visible"
                     >
-                        {secondaryItems.map((item) => (
+                        {secondaryItems.filter((item) => item.href !== '/settings' || isAdmin).map((item) => (
                             <motion.div key={item.href} variants={itemVariants}>
                                 <Link
                                     href={item.href}
@@ -347,7 +386,7 @@ export function Sidebar() {
                                 {displayName}
                             </p>
                             <p className="text-xs text-slate-400 truncate">
-                                {displayEmail}
+                                {displayEmail || 'Loading...'}
                             </p>
                         </div>
                     )}

@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { ExternalLink, MoreVertical, Database, X, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { ExternalLink, MoreVertical, Database, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { useAdminStatus } from '@/hooks/useAdminStatus';
 
 interface QueryInfo {
     query: string;
@@ -37,13 +38,7 @@ function QueryModal({
     title: string;
     queryInfo: QueryInfo;
 }) {
-    const [mounted, setMounted] = useState(false);
     const [copied, setCopied] = useState(false);
-
-    useEffect(() => {
-        setMounted(true);
-        return () => setMounted(false);
-    }, []);
 
     useEffect(() => {
         if (isOpen) {
@@ -66,7 +61,7 @@ function QueryModal({
         }
     };
 
-    if (!mounted || !isOpen) return null;
+    if (!isOpen || typeof document === 'undefined') return null;
 
     return createPortal(
         <div className="fixed inset-0 z-[9999]">
@@ -164,6 +159,7 @@ function QueryModal({
 }
 
 export function DataCard({ title, children, className, action, description, queryInfo, linkTo, id, headerExtra, onExportExcel, onExportPDF }: DataCardProps) {
+    const isAdmin = useAdminStatus();
     const [showQueryPopup, setShowQueryPopup] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
@@ -205,12 +201,6 @@ export function DataCard({ title, children, className, action, description, quer
         setShowQueryPopup(false);
     };
 
-    const handleCardClick = () => {
-        if (linkTo) {
-            router.push(linkTo);
-        }
-    };
-
     const handleNavigate = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -235,7 +225,8 @@ export function DataCard({ title, children, className, action, description, quer
     const hasExportActions = Boolean(onExportExcel || onExportPDF);
 
     // Check if we have any menu items to show
-    const hasMenuItems = linkTo || queryInfo;
+    const canViewQuery = Boolean(queryInfo && isAdmin);
+    const hasMenuItems = linkTo || canViewQuery;
 
     return (
         <>
@@ -365,7 +356,7 @@ export function DataCard({ title, children, className, action, description, quer
                                                 <span>ดูรายงาน</span>
                                             </button>
                                         )}
-                                        {queryInfo && (
+                                        {canViewQuery && (
                                             <button
                                                 className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))] transition-colors"
                                                 onClick={openPopup}
@@ -387,7 +378,7 @@ export function DataCard({ title, children, className, action, description, quer
             </div>
 
             {/* Query Info Modal */}
-            {queryInfo && (
+            {canViewQuery && queryInfo && (
                 <QueryModal
                     isOpen={showQueryPopup}
                     onClose={closePopup}
