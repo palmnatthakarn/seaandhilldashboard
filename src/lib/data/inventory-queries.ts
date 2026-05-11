@@ -65,19 +65,26 @@ FROM (
 }
 
 export function getStockMovementQuery(dateRange: DateRange): string {
-    return `-- Stock Movement: Purchases (Value) vs Sales (Value)
+    return `-- Stock Movement: Purchase cost (sum_amount) vs COGS (sum_of_cost)
 SELECT
-  toStartOfDay(st.doc_datetime) AS date,
-  greatest(0, abs(sum(CASE WHEN pt.doc_no != '' THEN st.amount ELSE 0 END))) AS purchaseValue,
-  greatest(0, abs(sum(CASE WHEN si.doc_no != '' THEN st.amount ELSE 0 END))) AS saleValue
-FROM stock_transaction st
-LEFT JOIN (
-  SELECT DISTINCT doc_no, branch_sync FROM purchase_transaction WHERE status_cancel != 'Cancel'
-) pt ON st.doc_no = pt.doc_no AND st.branch_sync = pt.branch_sync
-LEFT JOIN (
-  SELECT DISTINCT doc_no, branch_sync FROM saleinvoice_transaction WHERE status_cancel != 'Cancel'
-) si ON st.doc_no = si.doc_no AND st.branch_sync = si.branch_sync
-WHERE st.doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+  toStartOfDay(doc_datetime) AS date,
+  SUM(purchaseValue) AS purchaseValue,
+  SUM(saleValue)     AS saleValue
+FROM (
+  SELECT doc_datetime,
+    sum_amount AS purchaseValue,
+    0          AS saleValue
+  FROM purchase_transaction_detail
+  WHERE status_cancel != 'Cancel'
+    AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+  UNION ALL
+  SELECT doc_datetime,
+    0            AS purchaseValue,
+    sum_of_cost  AS saleValue
+  FROM saleinvoice_transaction_detail
+  WHERE status_cancel != 'Cancel'
+    AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+)
 GROUP BY date
 ORDER BY date ASC`;
 }

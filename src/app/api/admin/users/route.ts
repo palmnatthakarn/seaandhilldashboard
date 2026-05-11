@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   findManagedUserByEmail,
+  ensureEnvUsersInDatabase,
+  isEnvManagedEmail,
   isBootstrapAdmin,
   normalizeBranches,
   normalizeEmail,
@@ -36,6 +38,7 @@ export async function GET() {
   if (denied) return denied;
 
   await ensureAuthUserPolicyColumns();
+  await ensureEnvUsersInDatabase();
 
   const result = await authDbClient.execute('SELECT * FROM "user" ORDER BY updatedAt DESC');
   const users = await Promise.all(
@@ -124,9 +127,9 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: false, error: "User not found" }, { status: 404 });
   }
 
-  if (isBootstrapAdmin(currentEmail) && currentEmail !== nextEmail) {
+  if (isEnvManagedEmail(currentEmail) && currentEmail !== nextEmail) {
     return NextResponse.json(
-      { success: false, error: "Bootstrap admin email cannot be changed" },
+      { success: false, error: "Env-managed email cannot be changed" },
       { status: 400 }
     );
   }
@@ -164,6 +167,13 @@ export async function PATCH(request: NextRequest) {
     ],
   });
 
+  if (!enabled) {
+    await authDbClient.execute({
+      sql: 'DELETE FROM "session" WHERE userId = ?',
+      args: [existing.id],
+    });
+  }
+
   return NextResponse.json({
     success: true,
     data: await findManagedUserByEmail(nextEmail),
@@ -181,9 +191,9 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: false, error: "Email is required" }, { status: 400 });
   }
 
-  if (isBootstrapAdmin(email)) {
+  if (isEnvManagedEmail(email)) {
     return NextResponse.json(
-      { success: false, error: "Bootstrap admin cannot be deleted" },
+      { success: false, error: "Env-managed user cannot be deleted" },
       { status: 400 }
     );
   }

@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Plus, Save, ShieldCheck, Trash2, UserCog } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Loader2, Plus, Save, ShieldCheck, Trash2, UserCog, X } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 type AppRole = "admin" | "user";
@@ -26,6 +27,11 @@ interface ApiResponse<T> {
   error?: string;
 }
 
+interface ToastState {
+  type: "success" | "error";
+  message: string;
+}
+
 const ROLE_OPTIONS: Array<{ value: AppRole; label: string }> = [
   { value: "user", label: "User" },
   { value: "admin", label: "Admin" },
@@ -41,8 +47,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingEmail, setSavingEmail] = useState<string | null>(null);
   const [deletingEmail, setDeletingEmail] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<AppRole>("user");
   const [newBranches, setNewBranches] = useState<string[]>([]);
@@ -52,9 +57,12 @@ export default function SettingsPage() {
     [branches]
   );
 
-  async function loadData() {
+  const showToast = useCallback((type: ToastState["type"], message: string) => {
+    setToast({ type, message });
+  }, []);
+
+  const loadData = useCallback(async () => {
     setLoading(true);
-    setError(null);
 
     try {
       const [usersResponse, branchesResponse] = await Promise.all([
@@ -72,15 +80,22 @@ export default function SettingsPage() {
       setUsers(usersJson.data ?? []);
       setBranches(Array.isArray(branchesJson) ? branchesJson : []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "เกิดข้อผิดพลาดระหว่างโหลดข้อมูล");
+      showToast("error", err instanceof Error ? err.message : "เกิดข้อผิดพลาดระหว่างโหลดข้อมูล");
     } finally {
       setLoading(false);
     }
-  }
+  }, [showToast]);
 
   useEffect(() => {
     void loadData();
-  }, []);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!toast) return;
+
+    const timeout = window.setTimeout(() => setToast(null), 3600);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
 
   function toggleBranch(current: string[], branchKey: string) {
     if (branchKey === "*") {
@@ -96,8 +111,6 @@ export default function SettingsPage() {
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavingEmail(newEmail);
-    setMessage(null);
-    setError(null);
 
     try {
       const response = await fetch("/api/admin/users", {
@@ -120,9 +133,9 @@ export default function SettingsPage() {
       setNewEmail("");
       setNewRole("user");
       setNewBranches([]);
-      setMessage("เพิ่มผู้ใช้เรียบร้อย");
+      showToast("success", "เพิ่มผู้ใช้งานแล้ว");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "เพิ่มผู้ใช้ไม่สำเร็จ");
+      showToast("error", err instanceof Error ? err.message : "เพิ่มผู้ใช้งานไม่สำเร็จ");
     } finally {
       setSavingEmail(null);
     }
@@ -136,8 +149,6 @@ export default function SettingsPage() {
     };
 
     setSavingEmail(user.email);
-    setMessage(null);
-    setError(null);
 
     try {
       const response = await fetch("/api/admin/users", {
@@ -159,9 +170,9 @@ export default function SettingsPage() {
       }
 
       setUsers((current) => current.map((item) => (item.email === user.email ? json.data! : item)));
-      setMessage("บันทึกข้อมูลเรียบร้อย");
+      showToast("success", "บันทึกข้อมูลแล้ว");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "บันทึกข้อมูลไม่สำเร็จ");
+      showToast("error", err instanceof Error ? err.message : "บันทึกข้อมูลไม่สำเร็จ");
     } finally {
       setSavingEmail(null);
     }
@@ -172,8 +183,6 @@ export default function SettingsPage() {
     if (!confirmed) return;
 
     setDeletingEmail(user.email);
-    setMessage(null);
-    setError(null);
 
     try {
       const response = await fetch("/api/admin/users", {
@@ -188,9 +197,9 @@ export default function SettingsPage() {
       }
 
       setUsers((current) => current.filter((item) => item.email !== user.email));
-      setMessage("ลบผู้ใช้เรียบร้อย");
+      showToast("success", "ลบผู้ใช้งานแล้ว");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ลบผู้ใช้ไม่สำเร็จ");
+      showToast("error", err instanceof Error ? err.message : "ลบผู้ใช้งานไม่สำเร็จ");
     } finally {
       setDeletingEmail(null);
     }
@@ -198,7 +207,8 @@ export default function SettingsPage() {
 
   return (
     <main className="space-y-6">
-      <section className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-sm">
+      <Toast toast={toast} onClose={() => setToast(null)} />
+      <section className="space-x-10">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <div className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[hsl(var(--primary))]">
@@ -226,19 +236,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </section>
-
-      {(message || error) && (
-        <div
-          className={cn(
-            "rounded-lg border px-4 py-3 text-sm",
-            error
-              ? "border-rose-200 bg-rose-50 text-rose-700"
-              : "border-emerald-200 bg-emerald-50 text-emerald-700"
-          )}
-        >
-          {error || message}
-        </div>
-      )}
 
       <section className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-sm">
         <form className="grid gap-4 lg:grid-cols-[1fr_160px_1.5fr_auto]" onSubmit={createUser}>
@@ -300,7 +297,7 @@ export default function SettingsPage() {
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Allowed branches</th>
-                  <th className="px-4 py-3 text-right">Action</th>
+                  <th className="px-4 py-3 text-center0kd">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[hsl(var(--border))]">
@@ -325,6 +322,54 @@ export default function SettingsPage() {
   );
 }
 
+function Toast({
+  toast,
+  onClose,
+}: {
+  toast: ToastState | null;
+  onClose: () => void;
+}) {
+  if (!toast) return null;
+
+  const isError = toast.type === "error";
+
+  return (
+    <div className="fixed right-4 top-4 z-[100] w-[calc(100vw-2rem)] max-w-sm">
+      <div
+        className={cn(
+          "flex items-start gap-3 rounded-lg border-2 p-4 text-sm text-white shadow-2xl",
+          isError
+            ? "border-rose-700 bg-rose-600 shadow-rose-950/25"
+            : "border-emerald-700 bg-emerald-600 shadow-emerald-950/25"
+        )}
+      >
+        <div
+          className={cn(
+            "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+            isError ? "bg-white/20 text-white" : "bg-white/20 text-white"
+          )}
+        >
+          {isError ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-white">
+            {isError ? "เกิดข้อผิดพลาด" : "สำเร็จ"}
+          </p>
+          <p className="mt-1 leading-5 text-white/90">{toast.message}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-white/80 transition hover:bg-white/15 hover:text-white"
+          aria-label="ปิดข้อความแจ้งเตือน"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BranchPicker({
   branches,
   selected,
@@ -336,41 +381,86 @@ function BranchPicker({
   disabled?: boolean;
   onToggle: (branchKey: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const selectedBranchNames = branches
+    .filter((branch) => selected.includes(branch.key))
+    .map((branch) => branch.name);
+  const label = selected.includes("*")
+    ? "ทุกกิจการ"
+    : selectedBranchNames.length === 1
+      ? selectedBranchNames[0]
+      : selectedBranchNames.length > 1
+        ? `เลือกแล้ว ${selectedBranchNames.length} กิจการ`
+        : "เลือกกิจการ";
+
   return (
-    <div className="flex min-h-11 flex-wrap gap-2 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] p-2">
+    <div className="relative min-w-[260px]">
       <button
         type="button"
         disabled={disabled}
-        onClick={() => onToggle("*")}
+        onClick={() => setOpen((current) => !current)}
         className={cn(
-          "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold transition",
-          selected.includes("*")
-            ? "bg-[hsl(var(--primary))] text-white"
-            : "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]",
+          "flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-left text-sm outline-none transition focus:ring-2 focus:ring-[hsl(var(--ring))]",
           disabled && "cursor-not-allowed opacity-80"
         )}
+        aria-expanded={open}
       >
-        {selected.includes("*") && <Check className="h-3 w-3" />}
-        ทุกสาขา
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <ChevronDown className={cn("h-4 w-4 shrink-0 text-[hsl(var(--muted-foreground))] transition", open && "rotate-180")} />
       </button>
-      {branches.map((branch) => (
-        <button
-          key={branch.key}
-          type="button"
-          disabled={disabled || selected.includes("*")}
-          onClick={() => onToggle(branch.key)}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-semibold transition",
-            selected.includes(branch.key)
-              ? "bg-indigo-100 text-indigo-700"
-              : "bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]",
-            (disabled || selected.includes("*")) && "cursor-not-allowed opacity-60"
-          )}
-        >
-          {selected.includes(branch.key) && <Check className="h-3 w-3" />}
-          {branch.key}
-        </button>
-      ))}
+
+      {open && !disabled && (
+        <div className="absolute left-0 top-full z-50 mt-2 w-full min-w-[320px] overflow-hidden rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--popover))] shadow-xl">
+          <div className="max-h-72 overflow-y-auto p-2">
+            <button
+              type="button"
+              onClick={() => onToggle("*")}
+              className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition hover:bg-[hsl(var(--muted))]"
+            >
+              <span
+                className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                  selected.includes("*") ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-white" : "border-[hsl(var(--border))]"
+                )}
+              >
+                {selected.includes("*") && <Check className="h-3 w-3" />}
+              </span>
+              <span className="font-semibold">ทุกกิจการ</span>
+            </button>
+
+            <div className="my-2 h-px bg-[hsl(var(--border))]" />
+
+            {branches.map((branch) => {
+              const checked = selected.includes(branch.key);
+              const branchDisabled = selected.includes("*");
+
+              return (
+                <button
+                  key={branch.key}
+                  type="button"
+                  disabled={branchDisabled}
+                  onClick={() => onToggle(branch.key)}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition hover:bg-[hsl(var(--muted))]",
+                    branchDisabled && "cursor-not-allowed opacity-50"
+                  )}
+                  title={branch.name}
+                >
+                  <span
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                      checked ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-white" : "border-[hsl(var(--border))]"
+                    )}
+                  >
+                    {checked && <Check className="h-3 w-3" />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{branch.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -444,15 +534,19 @@ function UserRow({
         </select>
       </td>
       <td className="px-4 py-4">
-        <label className="inline-flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+        <div className="inline-flex items-center gap-3 text-sm">
+          <Switch
             checked={draft.enabled}
-            onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
-            className="h-4 w-4 rounded border-[hsl(var(--border))]"
+            disabled={saving || deleting}
+            onCheckedChange={(checked) => {
+              const nextDraft = { ...draft, enabled: checked };
+              setDraft(nextDraft);
+              void onSave(user, nextDraft);
+            }}
+            aria-label="เปลี่ยนสถานะผู้ใช้"
           />
-          {draft.enabled ? "เปิดใช้งาน" : "ปิดใช้งาน"}
-        </label>
+          <span>{draft.enabled ? "เปิดใช้งาน" : "ปิดใช้งาน"}</span>
+        </div>
       </td>
       <td className="px-4 py-4">
         <BranchPicker

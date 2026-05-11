@@ -3,6 +3,7 @@
 import { formatCurrency, formatMonth } from '@/lib/formatters';
 
 export interface PLDetailRow {
+  branchKey?: string;
   accountType: 'INCOME' | 'EXPENSES';
   accountCode: string;
   accountName: string;
@@ -13,7 +14,12 @@ export interface PLDetailRow {
 }
 
 export type PLViewMode = 'normal' | 'comparison';
-export type PLPeriodType = 'monthly' | 'quarterly' | 'yearly';
+export type PLPeriodType = 'monthly' | 'quarterly' | 'half-yearly' | 'yearly';
+
+export type PLBranchColumn = {
+  key: string;
+  name: string;
+};
 
 interface ProfitLossDetailTableProps {
   rows: PLDetailRow[];
@@ -23,6 +29,7 @@ interface ProfitLossDetailTableProps {
   selectedPeriods?: string[];
   comparePeriodA?: string;
   comparePeriodB?: string;
+  branches?: PLBranchColumn[];
 }
 
 type AccountEntry = {
@@ -40,6 +47,7 @@ export function ProfitLossDetailTable({
   selectedPeriods = [],
   comparePeriodA,
   comparePeriodB,
+  branches = [],
 }: ProfitLossDetailTableProps) {
   if (loading) {
     return (
@@ -72,9 +80,18 @@ export function ProfitLossDetailTable({
     return `${y}-Q${q}`;
   };
 
+  const getHalfYearStr = (monthStr: string) => {
+    const y = monthStr.substring(0, 4);
+    const m = parseInt(monthStr.substring(5, 7), 10);
+    return `${y}-H${m <= 6 ? 1 : 2}`;
+  };
+
   const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
     if (periodType === 'quarterly') {
       return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
+    }
+    if (periodType === 'half-yearly') {
+      return pKey.includes('-') && getHalfYearStr(pKey) === filterStr;
     }
     return pKey === filterStr;
   };
@@ -85,9 +102,15 @@ export function ProfitLossDetailTable({
   };
 
   // ── Group by (plGroup, accountCode) ──
+  const rowBranchKeys = Array.from(new Set(rows.map((r) => r.branchKey).filter(Boolean))) as string[];
+  const comparisonBranches = (branches.length > 0 ? branches : rowBranchKeys.map((key) => ({ key, name: key })))
+    .filter((branch) => rowBranchKeys.includes(branch.key));
+  const showBranchComparison = viewMode === 'comparison' && comparisonBranches.length > 0;
+
   const accountMap = new Map<string, AccountEntry>();
   for (const r of rows) {
-    const key = `${r.plGroup}__${r.accountCode}`;
+    const branchKey = showBranchComparison ? (r.branchKey || 'UNKNOWN') : 'ALL';
+    const key = `${branchKey}__${r.plGroup}__${r.accountCode}`;
     if (!accountMap.has(key)) {
       accountMap.set(key, { plGroup: r.plGroup, accountCode: r.accountCode, accountName: r.accountName, byPeriod: {} });
     }
@@ -171,12 +194,35 @@ export function ProfitLossDetailTable({
   // ── CSS helpers ──
   const cellCls  = 'px-4 py-2 text-right tabular-nums text-sm whitespace-nowrap min-w-[130px]';
   const labelCls = 'sticky left-0 z-10 px-12 py-2 text-sm min-w-[300px] bg-background';
+  const tableColSpan = showBranchComparison
+    ? 1 + (comparisonBranches.length * displayPeriods.length) + 2
+    : displayPeriods.length + (viewMode === 'normal' ? 2 : 3);
+
+  const branchValue = (branchKey: string, group: string, accountCode: string, period: string) =>
+    accountMap.get(`${branchKey}__${group}__${accountCode}`)?.byPeriod[period] || 0;
+
+  const renderBranchSummaryCells = (valuesForBranch: (branchKey: string, period: string) => number, className = '') => {
+    const branchTotals = comparisonBranches.map((branch) =>
+      displayPeriods.reduce((sum, period) => sum + valuesForBranch(branch.key, period), 0)
+    );
+    const total = branchTotals.reduce((sum, value) => sum + value, 0);
+    const diff = branchTotals.length >= 2 ? branchTotals[branchTotals.length - 1] - branchTotals[0] : 0;
+
+    return (
+      <>
+        <td className={`${cellCls} font-medium border-l border-border/40 ${className}`}>{fmt(total)}</td>
+        <td className={`${cellCls} font-medium border-l border-border/40 ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : ''} ${className}`}>
+          {diff > 0 ? '+' : ''}{fmt(diff)}
+        </td>
+      </>
+    );
+  };
 
   // ── Shared render helpers ──
   const SectionHeader = ({ label }: { label: string }) => (
     <tr className="border-b border-border">
       <td
-        colSpan={displayPeriods.length + 2}
+        colSpan={tableColSpan}
         className="sticky left-0 px-4 py-2 font-semibold text-foreground text-xs uppercase tracking-wider bg-background"
       >
         {label}
@@ -312,12 +358,91 @@ export function ProfitLossDetailTable({
     );
   };
 
+  const uniqueAccounts = (group: string) => Array.from(
+    new Map(all.filter((account) => account.plGroup === group).map((account) => [account.accountCode, account])).values()
+  ).sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+
+  const branchGroupValue = (branchKey: string, group: string, period: string) => {
+    let sum = 0;
+    for (const [key, account] of accountMap.entries()) {
+      if (key.startsWith(`${branchKey}__${group}__`)) {
+        sum += account.byPeriod[period] || 0;
+      }
+    }
+    return sum;
+  };
+
+  const branchRevenue = (branchKey: string, period: string) => branchGroupValue(branchKey, 'INCOME', period);
+  const branchCOGS = (branchKey: string, period: string) => branchGroupValue(branchKey, 'COGS', period);
+  const branchOperating = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OPERATING', period);
+  const branchOtherExp = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OTHER_EXPENSE', period);
+  const branchGrossProfit = (branchKey: string, period: string) => branchRevenue(branchKey, period) - branchCOGS(branchKey, period);
+  const branchNetProfit = (branchKey: string, period: string) =>
+    branchGrossProfit(branchKey, period) - branchOperating(branchKey, period) - branchOtherExp(branchKey, period);
+
+  const BranchAccountRow = ({ account, group }: { account: AccountEntry; group: string }) => (
+    <tr className="border-b border-border/40 hover:bg-muted/20 transition-colors">
+      <td className={labelCls}>
+        <span className="text-foreground">{account.accountName}</span>
+        <span className="block text-xs text-muted-foreground font-mono">{account.accountCode}</span>
+      </td>
+      {comparisonBranches.map((branch) =>
+        displayPeriods.map((period, index) => (
+          <td
+            key={`${branch.key}-${account.accountCode}-${period}-${index}`}
+            className={`${cellCls} ${index === 0 ? 'border-l border-border/40' : ''}`}
+          >
+            {fmt(branchValue(branch.key, group, account.accountCode, period))}
+          </td>
+        ))
+      )}
+      {renderBranchSummaryCells((branchKey, period) => branchValue(branchKey, group, account.accountCode, period))}
+    </tr>
+  );
+
+  const BranchValueRow = ({ label, values, strong = false }: {
+    label: string;
+    values: (branchKey: string, period: string) => number;
+    strong?: boolean;
+  }) => (
+    <tr className={`${strong ? 'border-t border-border font-bold' : 'border-b border-border bg-muted/5 font-bold'}`}>
+      <td className={`sticky left-0 z-10 ${strong ? 'px-4 py-3 text-sm bg-background' : 'bg-muted/5 px-6 py-2 text-xs'} min-w-[300px]`}>
+        {label}
+      </td>
+      {comparisonBranches.map((branch) =>
+        displayPeriods.map((period, index) => {
+          const value = values(branch.key, period);
+          return (
+            <td
+              key={`${branch.key}-${label}-${period}-${index}`}
+              className={`${cellCls} ${strong ? 'py-3' : 'text-xs py-2 font-bold'} ${index === 0 ? 'border-l border-border/40' : ''} ${value < 0 ? 'text-destructive' : ''}`}
+            >
+              {fmt(value)}
+            </td>
+          );
+        })
+      )}
+      {renderBranchSummaryCells(values, strong ? 'py-3 text-base font-bold' : 'text-xs py-2 font-bold')}
+    </tr>
+  );
+
   return (
     <div className="overflow-auto w-full">
       <table className="w-full text-sm border-collapse">
         {/* ── Header ── */}
         <thead>
-          {viewMode === 'comparison' && (
+          {showBranchComparison && (
+            <tr className="border-b border-border text-xs text-muted-foreground bg-muted/10">
+              <th className={`${labelCls} text-center font-medium py-2`}></th>
+              {comparisonBranches.map((branch) => (
+                <th key={branch.key} colSpan={displayPeriods.length} className="text-center font-semibold py-2 border-l border-border/40">
+                  {branch.name}
+                </th>
+              ))}
+              <th colSpan={2} className="border-l border-border"></th>
+            </tr>
+          )}
+          {viewMode === 'comparison' && !showBranchComparison && (
             <tr className="border-b border-border text-xs text-muted-foreground bg-muted/10">
               <th className={`${labelCls} text-center font-medium py-2`}></th>
               {periodsA.length > 0 && (
@@ -335,15 +460,23 @@ export function ProfitLossDetailTable({
           )}
           <tr className="border-b border-border text-xs text-muted-foreground">
             <th className={`${labelCls} text-center font-medium py-3`}>รายการ</th>
-            {displayPeriods.map((p, i) => {
-              const isFirstB = viewMode === 'comparison' && i === periodsA.length;
-              const borderCls = isFirstB ? 'border-l border-border' : '';
-              return (
-                <th key={`${p}-${i}`} className={`${cellCls} font-medium py-3 ${borderCls}`}>
-                  {formatPeriodLabel(p)}
-                </th>
-              );
-            })}
+            {showBranchComparison
+              ? comparisonBranches.map((branch) =>
+                  displayPeriods.map((p, i) => (
+                    <th key={`${branch.key}-${p}-${i}`} className={`${cellCls} font-medium py-3 ${i === 0 ? 'border-l border-border' : ''}`}>
+                      {formatPeriodLabel(p)}
+                    </th>
+                  ))
+                )
+              : displayPeriods.map((p, i) => {
+                  const isFirstB = viewMode === 'comparison' && i === periodsA.length;
+                  const borderCls = isFirstB ? 'border-l border-border' : '';
+                  return (
+                    <th key={`${p}-${i}`} className={`${cellCls} font-medium py-3 ${borderCls}`}>
+                      {formatPeriodLabel(p)}
+                    </th>
+                  );
+                })}
             {viewMode === 'normal' ? (
               <th className={`${cellCls} font-semibold py-3`}>รวม</th>
             ) : (
@@ -356,6 +489,34 @@ export function ProfitLossDetailTable({
         </thead>
 
         <tbody>
+          {showBranchComparison ? (
+            <>
+              <SectionHeader label="รายได้" />
+              {uniqueAccounts('INCOME').map((acc) => <BranchAccountRow key={acc.accountCode} account={acc} group="INCOME" />)}
+              <BranchValueRow label="รายได้รวม" values={branchRevenue} />
+
+              <SectionHeader label="ต้นทุนขาย และหรือต้นทุนการให้บริการ" />
+              {uniqueAccounts('COGS').map((acc) => <BranchAccountRow key={acc.accountCode} account={acc} group="COGS" />)}
+              <BranchValueRow label="รวมต้นทุนขาย และหรือต้นทุนการให้บริการ" values={branchCOGS} />
+
+              <BranchValueRow label="กำไรขั้นต้น" values={branchGrossProfit} strong />
+
+              <SectionHeader label="ค่าใช้จ่ายในการบริหาร" />
+              {uniqueAccounts('OPERATING').map((acc) => <BranchAccountRow key={acc.accountCode} account={acc} group="OPERATING" />)}
+              <BranchValueRow label="รวมค่าใช้จ่ายในการบริหาร" values={branchOperating} />
+
+              {uniqueAccounts('OTHER_EXPENSE').length > 0 && (
+                <>
+                  <SectionHeader label="ค่าใช้จ่ายอื่น" />
+                  {uniqueAccounts('OTHER_EXPENSE').map((acc) => <BranchAccountRow key={acc.accountCode} account={acc} group="OTHER_EXPENSE" />)}
+                  <BranchValueRow label="รวมค่าใช้จ่ายอื่น" values={branchOtherExp} />
+                </>
+              )}
+
+              <BranchValueRow label="กำไร (ขาดทุน) สุทธิ" values={branchNetProfit} strong />
+            </>
+          ) : (
+            <>
           {/* ═══════ INCOME ═══════ */}
           <SectionHeader label="รายได้" />
           {incomeAccounts.map((acc) => <AccountRow key={acc.accountCode} acc={acc} />)}
@@ -382,10 +543,10 @@ export function ProfitLossDetailTable({
           <NetRow label="กำไรขั้นต้น" values={grossProfit} grand={grandGross} />
 
           {/* ═══════ OPERATING EXPENSES ═══════ */}
-          <SectionHeader label="ค่าใช้จ่ายในการบริการ" />
+          <SectionHeader label="ค่าใช้จ่ายในการบริหาร" />
           {operatingAccounts.map((acc) => <AccountRow key={acc.accountCode} acc={acc} />)}
           <SubtotalRow 
-            label="รวมค่าใช้จ่ายในการบริการ" 
+            label="รวมค่าใช้จ่ายในการบริหาร" 
             values={totalOperating} 
             grand={grandOperating} 
             diffFunc={() => diffAmount(operatingAccounts)}
@@ -409,6 +570,8 @@ export function ProfitLossDetailTable({
 
           {/* ═══════ NET PROFIT ═══════ */}
           <NetRow label="กำไร (ขาดทุน) สุทธิ" values={netProfit} grand={grandNet} />
+            </>
+          )}
         </tbody>
       </table>
     </div>

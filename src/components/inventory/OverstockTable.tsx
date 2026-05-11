@@ -189,6 +189,14 @@ export function OverstockTable({ data, height = '300px' }: OverstockChartProps) 
       render: (item: ChartOverstockItem) => formatNumber(item.qtyOnHand),
     },
     {
+      key: 'unitCode',
+      header: 'หน่วย',
+      sortable: true,
+      align: 'left',
+      className: 'w-10',
+      render: (item: ChartOverstockItem) => item.unitCode || '-',
+    },
+    {
       key: 'avgDailySales',
       header: 'ยอดขาย/วัน',
       sortable: true,

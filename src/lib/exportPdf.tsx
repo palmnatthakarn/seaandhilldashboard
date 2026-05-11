@@ -108,18 +108,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    borderBottomWidth: 1.5,
-    borderBottomColor: COLORS.border,
-    borderBottomStyle: 'solid',
     paddingBottom: 5,
     width: '100%',
   },
   metaBlockLeft: {
-    width: '75%',
-    paddingRight: 15,
+    width: '100%',
+    paddingRight: 0,
   },
   metaBlockRight: {
-    width: '28%',
+    width: '30%',
     alignItems: 'flex-end',
   },
   metaText: {
@@ -139,8 +136,6 @@ const styles = StyleSheet.create({
   },
   table: {
     width: '100%',
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
     borderBottomWidth: 1.5,
     borderBottomColor: COLORS.border,
     borderStyle: 'solid',
@@ -153,28 +148,28 @@ const styles = StyleSheet.create({
     minHeight: 16,
   },
   headerRow: {
-    borderBottomWidth: 1.5,
+    borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
     backgroundColor: COLORS.headerBg,
     minHeight: 20,
   },
   summaryRow: {
     backgroundColor: COLORS.summaryBg,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopWidth: 0.5,
+    borderTopColor: COLORS.grid,
     borderTopStyle: 'solid',
     minHeight: 18,
   },
   sectionRow: {
     backgroundColor: COLORS.sectionBg,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomWidth: 0.5,
+    borderBottomColor: COLORS.grid,
     borderBottomStyle: 'solid',
     minHeight: 16,
   },
   cell: {
     paddingVertical: 4,
-    paddingHorizontal: 5,
+    paddingHorizontal: 6,
     flexGrow: 1,
     flexBasis: 0,
     flexShrink: 1,
@@ -182,8 +177,8 @@ const styles = StyleSheet.create({
   },
   cellIndented: {
     paddingVertical: 4,
-    paddingHorizontal: 5,
-    paddingLeft: 15,
+    paddingHorizontal: 6,
+    paddingLeft: 16,
     flexGrow: 1,
     flexBasis: 0,
     flexShrink: 1,
@@ -194,7 +189,7 @@ const styles = StyleSheet.create({
     fontSize: 8,
     color: COLORS.text,
     lineHeight: 1.35,
-    letterSpacing: 0.1,
+    letterSpacing: 0,
   },
   cellTextBold: {
     fontFamily: 'Sarabun',
@@ -202,41 +197,55 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: COLORS.text,
     lineHeight: 1.35,
-    letterSpacing: 0.15,
+    letterSpacing: 0,
   },
   headerCellText: {
     fontFamily: 'Sarabun',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: 'bold',
     color: COLORS.text,
     lineHeight: 1.35,
-    letterSpacing: 0.15,
+    letterSpacing: 0,
   },
   summaryCellText: {
     fontFamily: 'Sarabun',
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: 'bold',
     color: COLORS.text,
     lineHeight: 1.35,
-    letterSpacing: 0.15,
+    letterSpacing: 0,
   },
   sectionHeaderText: {
     fontFamily: 'Sarabun',
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: 'bold',
     color: COLORS.text,
     lineHeight: 1.35,
-    letterSpacing: 0.2,
+    letterSpacing: 0,
   },
 });
 
-function calculateSummary<T extends Record<string, any>>(
+type PdfColumnGroup = {
+  label: string;
+  span: number;
+};
+
+function guardPdfText(value: string): string {
+  if (!value || value === '-') return value;
+  return `${value}\u00A0`;
+}
+
+function getRowValue(row: object, key: string): unknown {
+  return (row as Record<string, unknown>)[key];
+}
+
+function calculateSummary<T extends object>(
   data: T[],
   key: string,
   type: SummaryType
 ): number {
   const values = data
-    .map((row) => parseFloat(row[key]))
+    .map((row) => parseFloat(String(getRowValue(row, key) ?? '')))
     .filter((v) => !Number.isNaN(v));
 
   if (values.length === 0) return 0;
@@ -258,7 +267,7 @@ function calculateSummary<T extends Record<string, any>>(
 }
 
 function formatCellValue(
-  value: any,
+  value: unknown,
   key: string,
   numberColumns: string[],
   currencyColumns: string[],
@@ -327,7 +336,7 @@ function formatCellValue(
 }
 
 /** Compute column widths based on both header and sampled content length */
-function computeColumnWidths<T extends Record<string, any>>(
+function computeColumnWidths<T extends object>(
   headerKeys: string[],
   headerValues: string[],
   data: T[],
@@ -341,11 +350,11 @@ function computeColumnWidths<T extends Record<string, any>>(
     const key = headerKeys[index];
     
     // Special handling for first two columns (code and name)
-    if (index === 0) {
+    if (key === 'accountCode') {
       // Account code column - fixed small width
       return 9;
     }
-    if (index === 1) {
+    if (key === 'accountName') {
       // Account name column - larger fixed width for Thai text
       return 38;
     }
@@ -354,7 +363,7 @@ function computeColumnWidths<T extends Record<string, any>>(
     let maxLen = header.length * 1.3; // Thai characters need more space
 
     for (const row of sampledRows) {
-      const value = row[key];
+      const value = getRowValue(row, key);
       if (value === null || value === undefined || value === '') continue;
       
       // Format the value as it will appear in PDF
@@ -410,7 +419,7 @@ function formatThaiDate(isoDate: string): string {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return isoDate;
 
-  const [_, year, month, day] = match;
+  const [, year, month, day] = match;
   const date = new Date(Number(year), Number(month) - 1, Number(day));
 
   return date.toLocaleDateString('th-TH', {
@@ -424,7 +433,7 @@ function localizeDateRangeText(text: string): string {
   return text.replace(/\b\d{4}-\d{2}-\d{2}\b/g, (dateStr) => formatThaiDate(dateStr));
 }
 
-export async function exportStyledPdfReport<T extends Record<string, any>>(options: {
+export async function exportStyledPdfReport<T extends object>(options: {
   data: T[];
   headers: Record<string, string>;
   filename: string;
@@ -434,6 +443,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
   currencyColumns?: string[];
   percentColumns?: string[];
   summaryConfig?: ExcelSummaryConfig;
+  columnGroups?: PdfColumnGroup[];
 }): Promise<void> {
   const {
     data,
@@ -445,6 +455,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
     currencyColumns = [],
     percentColumns = [],
     summaryConfig,
+    columnGroups,
   } = options;
 
   if (!data || data.length === 0) {
@@ -464,10 +475,10 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
 
   // Helper functions to detect row types for P&L report
   const isSectionHeader = (row: T): boolean => {
-    const firstKey = headerKeys[0]; // accountCode
-    const secondKey = headerKeys[1]; // accountName
-    const codeValue = row[firstKey];
-    const nameValue = row[secondKey];
+    const codeKey = headerKeys.includes('accountCode') ? 'accountCode' : undefined;
+    const nameKey = headerKeys.includes('accountName') ? 'accountName' : headerKeys[0];
+    const codeValue = codeKey ? getRowValue(row, codeKey) : '';
+    const nameValue = getRowValue(row, nameKey);
     
     // Section headers have no code and name starts with ──
     if (!codeValue || codeValue === '') {
@@ -478,22 +489,27 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
   };
 
   const isSummaryRow = (row: T): boolean => {
-    const firstKey = headerKeys[0]; // accountCode
-    const secondKey = headerKeys[1]; // accountName
-    const codeValue = row[firstKey];
-    const nameValue = row[secondKey];
+    const codeKey = headerKeys.includes('accountCode') ? 'accountCode' : undefined;
+    const nameKey = headerKeys.includes('accountName') ? 'accountName' : headerKeys[0];
+    const codeValue = codeKey ? getRowValue(row, codeKey) : '';
+    const nameValue = getRowValue(row, nameKey);
     
     // Summary rows have no code but name starts with รวม or กำไร
     if (!codeValue || codeValue === '') {
       const nameStr = String(nameValue || '');
-      return nameStr.startsWith('รวม') || nameStr.includes('กำไร');
+      return nameStr.startsWith('รวม') || nameStr.endsWith('รวม') || nameStr.includes('กำไร');
     }
     return false;
   };
 
   const isAccountRow = (row: T): boolean => {
-    const firstKey = headerKeys[0]; // accountCode
-    const codeValue = row[firstKey];
+    const codeKey = headerKeys.includes('accountCode') ? 'accountCode' : undefined;
+    if (!codeKey) {
+      const nameKey = headerKeys.includes('accountName') ? 'accountName' : headerKeys[0];
+      const nameValue = getRowValue(row, nameKey);
+      return !!nameValue && nameValue !== '' && !isSectionHeader(row) && !isSummaryRow(row);
+    }
+    const codeValue = getRowValue(row, codeKey);
     
     // Account rows have a code
     return !!codeValue && codeValue !== '';
@@ -502,7 +518,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
   // Helper to detect blank rows
   const isBlankRow = (row: T): boolean => {
     return headerKeys.every(key => {
-      const val = row[key];
+      const val = getRowValue(row, key);
       return val === null || val === undefined || val === '' || val === 0;
     });
   };
@@ -524,12 +540,12 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
         <View style={styles.reportHeader} fixed>
           {title ? (
             <View style={{ width: '100%', paddingHorizontal: 5 }}>
-              <Text style={styles.title}>{title}</Text>
+              <Text style={styles.title}>{guardPdfText(title)}</Text>
             </View>
           ) : null}
           {cleanSubtitle ? (
             <View style={{ width: '100%', paddingHorizontal: 5 }}>
-              <Text style={styles.subtitle}>{cleanSubtitle}</Text>
+              <Text style={styles.subtitle}>{guardPdfText(cleanSubtitle)}</Text>
             </View>
           ) : null}
         </View>
@@ -538,16 +554,40 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
           <View style={styles.metaBlockLeft}>
             <View style={{ width: '100%', paddingRight: 5 }}>
               <Text style={styles.metaTextBold}>
-                ชื่อสถานประกอบการ : {companyName}
+                {guardPdfText(`ชื่อสถานประกอบการ : ${companyName}`)}
               </Text>
             </View>
             <View style={{ width: '100%', paddingRight: 5 }}>
-              <Text style={styles.metaText}>วันที่พิมพ์ : {generatedAt}</Text>
+              <Text style={styles.metaText}>{guardPdfText(`วันที่พิมพ์ : ${generatedAt}`)}</Text>
             </View>
           </View>
         </View>
 
         <View style={styles.table}>
+          {columnGroups?.length ? (
+            <View style={[styles.row, styles.headerRow]} fixed>
+              {columnGroups.map((group, groupIndex) => {
+                const startIndex = columnGroups
+                  .slice(0, groupIndex)
+                  .reduce((sum, item) => sum + item.span, 0);
+                const groupWidth = colWidths
+                  .slice(startIndex, startIndex + group.span)
+                  .reduce((sum, width) => sum + width, 0);
+
+                return (
+                  <View
+                    key={`hg-${groupIndex}`}
+                    style={[styles.cell, { flexBasis: `${groupWidth}%`, flexGrow: 0 }]}
+                  >
+                    <Text style={[styles.headerCellText, { textAlign: 'center' }]}>
+                      {guardPdfText(group.label)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
           <View style={[styles.row, styles.headerRow]} fixed>
             {headerValues.map((header, index) => {
               const key = headerKeys[index];
@@ -557,7 +597,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
                   key={`h-${index}`}
                   style={[styles.cell, { flexBasis: `${colWidths[index]}%`, flexGrow: 0 }]}
                 >
-                  <Text style={[styles.headerCellText, { textAlign: align }]}>{header}</Text>
+                  <Text style={[styles.headerCellText, { textAlign: align }]}>{guardPdfText(header)}</Text>
                 </View>
               );
             })}
@@ -587,7 +627,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
               >
                 {headerKeys.map((key, colIndex) => {
                   const align = isNumberColumn(key) ? 'right' : 'left';
-                  const cellValue = formatCellValue(row[key], key, numberColumns, currencyColumns, percentColumns);
+                  const cellValue = formatCellValue(getRowValue(row, key), key, numberColumns, currencyColumns, percentColumns);
                   
                   // Determine cell style and text style
                   let cellStyle = styles.cell;
@@ -621,7 +661,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
                       style={[cellStyle, { flexBasis: `${colWidths[colIndex]}%`, flexGrow: 0 }]}
                     >
                       <Text style={[textStyle, { textAlign: align }]}>
-                        {cellValue}
+                        {guardPdfText(cellValue)}
                       </Text>
                     </View>
                   );
@@ -640,7 +680,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
                   return (
                     <View key={`s-${key}`} style={colStyle}>
                       <Text style={[styles.summaryCellText, { textAlign: align }]}>
-                        {summaryConfig.label || 'รวมทั้งหมด'}
+                        {guardPdfText(summaryConfig.label || 'รวมทั้งหมด')}
                       </Text>
                     </View>
                   );
@@ -651,7 +691,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
                   return (
                     <View key={`s-${key}`} style={colStyle}>
                       <Text style={[styles.summaryCellText, { textAlign: align }]}>
-                        {formatCellValue(summary, key, numberColumns, currencyColumns, percentColumns)}
+                        {guardPdfText(formatCellValue(summary, key, numberColumns, currencyColumns, percentColumns))}
                       </Text>
                     </View>
                   );
@@ -659,7 +699,7 @@ export async function exportStyledPdfReport<T extends Record<string, any>>(optio
 
                 return (
                   <View key={`s-${key}`} style={colStyle}>
-                    <Text style={[styles.summaryCellText, { textAlign: align }]}>-</Text>
+                    <Text style={[styles.summaryCellText, { textAlign: align }]}>{guardPdfText('-')}</Text>
                   </View>
                 );
               })}

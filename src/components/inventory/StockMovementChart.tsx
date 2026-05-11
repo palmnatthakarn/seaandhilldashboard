@@ -46,7 +46,7 @@ export function StockMovementChart({ data, height = '400px' }: StockMovementChar
         },
       },
       legend: {
-        data: ['ซื้อเข้า (สุทธิ)', 'ขายออก (สุทธิ)'],
+        data: ['ซื้อเข้า (ต้นทุน)', 'ขายออก (ต้นทุน)'],
         top: 0,
       },
       grid: {
@@ -73,7 +73,7 @@ export function StockMovementChart({ data, height = '400px' }: StockMovementChar
       },
       series: [
         {
-          name: 'ซื้อเข้า (สุทธิ)',
+          name: 'ซื้อเข้า (ต้นทุน)',
           type: 'line',
           data: qtyInData,
           smooth: true,
@@ -88,7 +88,7 @@ export function StockMovementChart({ data, height = '400px' }: StockMovementChar
           },
         },
         {
-          name: 'ขายออก (สุทธิ)',
+          name: 'ขายออก (ต้นทุน)',
           type: 'line',
           data: qtyOutData,
           smooth: true,

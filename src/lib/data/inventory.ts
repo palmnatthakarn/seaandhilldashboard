@@ -204,79 +204,63 @@ export async function getInventoryKPIs(dateRange: DateRange, branchSync?: string
 
 /**
  * Get Stock Movement (Purchases IN / Sales OUT) over time
- * 
- * Logic:
- *   purchaseQty = net qty from purchase documents (buying received − returns to supplier)
- *   saleQty     = abs(net qty from sale documents) (sold − customer returns)
  *
- * By joining stock_transaction with purchase_transaction / saleinvoice_transaction
- * we isolate only genuine business flows and cancel out returns within each type.
+ * Logic:
+ *   purchaseValue = sum_amount from purchase_transaction_detail
+ *                  (actual purchase price per line, ERP-calculated, unit-correct)
+ *   saleValue     = sum_of_cost from saleinvoice_transaction_detail
+ *                  (COGS per line, ERP-calculated, unit-correct)
+ *
+ * Both values come from detail tables so unit conversion is handled by the ERP.
  */
 export async function getStockMovement(dateRange: DateRange, branchSync?: string[]): Promise<StockMovement[]> {
   try {
     const branchFilter = buildBranchFilter(branchSync);
-
-    // Branch filter for stock_transaction, purchase_transaction, and saleinvoice_transaction
-    // The columns are just branch_sync inside their respective subqueries.
-    const stBranchFilter = branchFilter.sql ? branchFilter.sql.replace(/branch_sync/g, 'st.branch_sync') : '';
     const plainBranchFilter = branchFilter.sql || '';
 
     const query = `
       SELECT
-        toStartOfDay(st.doc_datetime) AS date,
-
-        -- Value from purchase documents (abs to handle negative/positive amounts)
-        greatest(0,
-          abs(sum(CASE WHEN pt.doc_no != '' THEN st.amount ELSE 0 END))
-        ) AS purchaseValue,
-
-        -- Value from sale documents (abs to handle negative/positive amounts)
-        greatest(0,
-          abs(sum(CASE WHEN si.doc_no != '' THEN st.amount ELSE 0 END))
-        ) AS saleValue
-
-      FROM stock_transaction st
-
-      -- Join to purchase docs (non-cancelled)
-      LEFT JOIN (
-        SELECT DISTINCT doc_no, branch_sync
-        FROM purchase_transaction
+        toStartOfDay(doc_datetime) AS date,
+        SUM(purchaseValue)         AS purchaseValue,
+        SUM(saleValue)             AS saleValue
+      FROM (
+        -- ซื้อเข้า: ต้นทุนสินค้ารับเข้าสต็อก (sum_of_cost จาก purchase_transaction_detail)
+        SELECT
+          doc_datetime,
+          sum_of_cost AS purchaseValue,
+          0           AS saleValue
+        FROM purchase_transaction_detail
         WHERE status_cancel != 'Cancel'
-        ${plainBranchFilter}
-      ) pt ON st.doc_no = pt.doc_no AND st.branch_sync = pt.branch_sync
-
-      -- Join to sale docs (non-cancelled)
-      LEFT JOIN (
-        SELECT DISTINCT doc_no, branch_sync
-        FROM saleinvoice_transaction
+          AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+          ${plainBranchFilter}
+        UNION ALL
+        -- ขายออก: ต้นทุนสินค้าขาย (COGS) = sum_of_cost จาก ERP
+        SELECT
+          doc_datetime,
+          0           AS purchaseValue,
+          sum_of_cost AS saleValue
+        FROM saleinvoice_transaction_detail
         WHERE status_cancel != 'Cancel'
-        ${plainBranchFilter}
-      ) si ON st.doc_no = si.doc_no AND st.branch_sync = si.branch_sync
-
-      WHERE st.doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
-        ${stBranchFilter}
-
+          AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+          ${plainBranchFilter}
+      )
       GROUP BY date
       ORDER BY date ASC
     `;
 
     const result = await clickhouse.query({
       query,
-      query_params: {
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-        ...branchFilter.params
-      },
+      query_params: branchFilter.params,
       format: 'JSONEachRow',
     });
 
     const data = await result.json();
     return data.map((row: any) => ({
       date: row.date,
-      qtyIn:  0, // Kept for compatibility 
+      qtyIn:  0,
       qtyOut: 0,
-      valueIn:  Number(row.purchaseValue) || 0,   // มูลค่าซื้อเข้า
-      valueOut: Number(row.saleValue)     || 0,   // มูลค่าขายออก
+      valueIn:  Number(row.purchaseValue) || 0,  // ราคาซื้อเข้า (sum_amount)
+      valueOut: Number(row.saleValue)     || 0,  // ต้นทุนขายออก COGS (sum_of_cost)
     }));
   } catch (error) {
     console.error('Error fetching stock movement:', error);
@@ -360,6 +344,7 @@ export async function getOverstockItems(dateRange: DateRange, branchSync?: strin
         any(item_name) as itemName,
         any(item_category_name) as categoryName,
         any(item_brand_name) as brandName,
+        any(ic_unit_code) as unitCode,
         any(wh_name) as branchName,
         sum(qty) as currentStock,
         if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg,
@@ -397,6 +382,7 @@ export async function getOverstockItems(dateRange: DateRange, branchSync?: strin
         itemName: row.itemName,
         categoryName: row.categoryName || '-',
         brandName: row.brandName || '-',
+        unitCode: row.unitCode || '-',
         branchName: row.branchName || '-',
         currentStock: currentStock,
         qtyOnHand: currentStock,

@@ -424,12 +424,6 @@ export function getAccountProductsQuery(
       ON jd.doc_no = std.doc_no
       AND jd.branch_sync = std.branch_sync
       AND std.status_cancel != 'Cancel'
-      AND (
-        -- กรองเฉพาะสินค้าที่ category ตรงกับชื่อผังบัญชี
-        TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)) = TRIM(std.item_category_name)
-        OR std.item_category_name LIKE CONCAT('%', TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)), '%')
-        OR TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)) LIKE CONCAT('%', std.item_category_name, '%')
-      )
     ORDER BY jd.doc_datetime DESC, jd.doc_no DESC, std.item_code ASC
   `;
 }
@@ -479,12 +473,6 @@ export function getAccountPurchaseItemsQuery(
     LEFT JOIN purchase_transaction_detail ptd
       ON jd.doc_no = ptd.doc_no
       AND jd.branch_sync = ptd.branch_sync
-      AND (
-        -- กรองเฉพาะสินค้าที่ category ตรงกับชื่อผังบัญชี
-        TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)) = TRIM(ptd.item_category_name)
-        OR ptd.item_category_name LIKE CONCAT('%', TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)), '%')
-        OR TRIM(SUBSTRING_INDEX(jd.account_name, '-', -1)) LIKE CONCAT('%', ptd.item_category_name, '%')
-      )
     ORDER BY jd.doc_datetime DESC, jd.doc_no DESC, ptd.item_code ASC
   `;
 }

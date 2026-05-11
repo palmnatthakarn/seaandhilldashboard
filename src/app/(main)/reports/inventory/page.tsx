@@ -187,7 +187,7 @@ export default function InventoryReportPage() {
     },
     {
       key: 'valueIn',
-      header: 'ซื้อเข้า (บาท)',
+      header: 'ซื้อเข้า (ต้นทุน)',
       sortable: true,
       align: 'right',
       render: (item: StockMovement) => (
@@ -196,7 +196,7 @@ export default function InventoryReportPage() {
     },
     {
       key: 'valueOut',
-      header: 'ขายออก (บาท)',
+      header: 'ขายออก (ต้นทุน)',
       sortable: true,
       align: 'right',
       render: (item: StockMovement) => (
@@ -685,7 +685,7 @@ export default function InventoryReportPage() {
       case 'stock-movement':
         return () => exportStyledReport({
           data: stockMovement.map(item => ({ date: item.date, valueIn: item.valueIn || 0, valueOut: item.valueOut || 0 })),
-          headers: { date: 'วันที่', valueIn: 'ซื้อเข้า (บาท)', valueOut: 'ขายออก (บาท)' },
+          headers: { date: 'วันที่', valueIn: 'ซื้อเข้า (ต้นทุน)', valueOut: 'ขายออก (ต้นทุน)' },
           filename: 'การเคลื่อนไหวสต็อก',
           sheetName: 'Stock Movement',
           title: 'รายงานการเคลื่อนไหวสต็อก (ซื้อเข้า vs ขายออก)',
@@ -795,7 +795,7 @@ export default function InventoryReportPage() {
       case 'stock-movement':
         return () => exportStyledPdfReport({
           data: stockMovement.map(item => ({ date: item.date, valueIn: item.valueIn || 0, valueOut: item.valueOut || 0 })),
-          headers: { date: 'วันที่', valueIn: 'ซื้อเข้า (บาท)', valueOut: 'ขายออก (บาท)' },
+          headers: { date: 'วันที่', valueIn: 'ซื้อเข้า (ต้นทุน)', valueOut: 'ขายออก (ต้นทุน)' },
           filename: 'การเคลื่อนไหวสต็อก',
           title: 'รายงานการเคลื่อนไหวสต็อก (ซื้อเข้า vs ขายออก)',
           subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),

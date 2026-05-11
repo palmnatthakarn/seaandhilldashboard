@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { authDbClient, ensureAuthUserPolicyColumns } from "@/lib/auth-db";
@@ -32,6 +33,15 @@ export function normalizeEmail(email?: string | null) {
 export function isBootstrapAdmin(email?: string | null) {
   const normalized = normalizeEmail(email);
   return Boolean(normalized && adminEmails.has(normalized));
+}
+
+export function isLegacyAllowedEmail(email?: string | null) {
+  const normalized = normalizeEmail(email);
+  return Boolean(normalized && legacyAllowedEmails.has(normalized));
+}
+
+export function isEnvManagedEmail(email?: string | null) {
+  return isBootstrapAdmin(email) || isLegacyAllowedEmail(email);
 }
 
 export function isAdminUser(user?: { email?: string | null; role?: string | null } | null) {
@@ -100,13 +110,74 @@ export async function findManagedUserByEmail(email?: string | null) {
   return row ? rowToManagedUser(row) : null;
 }
 
+async function upsertEnvUser(email: string, role: AppRole) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) return;
+
+  const existing = await authDbClient.execute({
+    sql: 'SELECT id FROM "user" WHERE email = ? LIMIT 1',
+    args: [normalized],
+  });
+  const now = new Date().toISOString();
+
+  if (existing.rows.length > 0) {
+    if (role === "admin") {
+      await authDbClient.execute({
+        sql: `
+          UPDATE "user"
+          SET role = 'admin', enabled = 1, allowed_branches = ?, updatedAt = ?
+          WHERE email = ?
+        `,
+        args: [JSON.stringify(["*"]), now, normalized],
+      });
+    }
+    return;
+  }
+
+  await authDbClient.execute({
+    sql: `
+      INSERT INTO "user" (
+        id, name, email, emailVerified, image, createdAt, updatedAt, role, enabled, allowed_branches
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      randomUUID(),
+      normalized.split("@")[0],
+      normalized,
+      1,
+      null,
+      now,
+      now,
+      role,
+      1,
+      JSON.stringify(role === "admin" ? ["*"] : []),
+    ],
+  });
+}
+
+export async function ensureEnvUsersInDatabase() {
+  await ensureAuthUserPolicyColumns();
+
+  for (const email of legacyAllowedEmails) {
+    await upsertEnvUser(email, "user");
+  }
+
+  for (const email of adminEmails) {
+    await upsertEnvUser(email, "admin");
+  }
+}
+
 export async function isEmailAllowed(email?: string | null) {
   const normalized = normalizeEmail(email);
   if (!normalized) return false;
-  if (isBootstrapAdmin(normalized) || legacyAllowedEmails.has(normalized)) return true;
+  if (isBootstrapAdmin(normalized)) return true;
 
   const user = await findManagedUserByEmail(normalized);
-  return Boolean(user?.enabled);
+  if (user) {
+    return user.enabled;
+  }
+
+  return legacyAllowedEmails.has(normalized);
 }
 
 export async function getCurrentSessionUser() {

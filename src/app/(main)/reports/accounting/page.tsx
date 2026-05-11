@@ -136,7 +136,7 @@ function AccountingReportContent() {
   });
 
   const [plViewMode, setPlViewMode] = useState<'normal' | 'comparison'>('normal');
-  const [plPeriodType, setPlPeriodType] = useState<'monthly' | 'quarterly' | 'yearly'>('monthly');
+  const [plPeriodType, setPlPeriodType] = useState<'monthly' | 'quarterly' | 'half-yearly' | 'yearly'>('monthly');
   const [plSelectedPeriods, setPlSelectedPeriods] = useState<string[]>([]);
   const [plCompareA, setPlCompareA] = useState<string>('');
   const [plCompareB, setPlCompareB] = useState<string>('');
@@ -236,6 +236,7 @@ function AccountingReportContent() {
       if (!res.ok) throw new Error('Failed to fetch P&L detail');
       const json = await res.json();
       return (json.data || []).map((r: any) => ({
+        branchKey: r.branchKey,
         accountType: r.accountType,
         accountCode: r.accountCode,
         accountName: r.accountName,
@@ -564,6 +565,9 @@ function AccountingReportContent() {
             selectedPeriods={plSelectedPeriods}
             comparePeriodA={plCompareA}
             comparePeriodB={plCompareB}
+            branches={selectedBranches.includes('ALL')
+              ? availableBranches
+              : availableBranches.filter((branch) => selectedBranches.includes(branch.key))}
           />
         );
       }
@@ -1561,9 +1565,17 @@ function AccountingReportContent() {
           const q = Math.ceil(m / 3);
           return `${y}-Q${q}`;
         };
+        const getHalfYearStr = (monthStr: string) => {
+          const y = monthStr.substring(0, 4);
+          const m = parseInt(monthStr.substring(5, 7), 10);
+          return `${y}-H${m <= 6 ? 1 : 2}`;
+        };
         const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
           if (plPeriodType === 'quarterly') {
             return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
+          }
+          if (plPeriodType === 'half-yearly') {
+            return pKey.includes('-') && getHalfYearStr(pKey) === filterStr;
           }
           return pKey === filterStr;
         };
@@ -1597,6 +1609,168 @@ function AccountingReportContent() {
 
         const allMonthsExport = displayPeriods;
         const empty = (m: string) => [m, ''] as [string, string];
+        const formatPeriodLabelExport = (pKey: string) => {
+          if (plPeriodType === 'yearly') return pKey;
+          return formatMonth(pKey);
+        };
+
+        const rowBranchKeysExport = Array.from(new Set(plDetailRows.map((r) => r.branchKey).filter(Boolean))) as string[];
+        const comparisonBranchesExport = (selectedBranches.includes('ALL')
+          ? availableBranches
+          : availableBranches.filter((branch) => selectedBranches.includes(branch.key)))
+          .filter((branch) => rowBranchKeysExport.includes(branch.key));
+        const showBranchComparisonExport = plViewMode === 'comparison' && comparisonBranchesExport.length > 0;
+
+        if (showBranchComparisonExport) {
+          type BranchAcc = {
+            branchKey: string;
+            plGroup: string;
+            accountCode: string;
+            accountName: string;
+            byMonth: Record<string, number>;
+          };
+
+          const branchMap = new Map<string, BranchAcc>();
+          for (const r of plDetailRows) {
+            const branchKey = r.branchKey || 'UNKNOWN';
+            const pKey = getPeriodKey(r.month);
+            const key = `${branchKey}__${r.plGroup}__${r.accountCode}`;
+            if (!branchMap.has(key)) {
+              branchMap.set(key, {
+                branchKey,
+                plGroup: r.plGroup,
+                accountCode: r.accountCode,
+                accountName: r.accountName,
+                byMonth: {},
+              });
+            }
+            const entry = branchMap.get(key)!;
+            entry.byMonth[pKey] = (entry.byMonth[pKey] || 0) + r.amount;
+          }
+
+          const branchPeriodKeys = comparisonBranchesExport.flatMap((branch) =>
+            allMonthsExport.map((period, periodIndex) => ({
+              key: `branch_${branch.key}_${period}_${periodIndex}`,
+              branchKey: branch.key,
+              period,
+            }))
+          );
+
+          const uniqueAccounts = (group: string) => Array.from(
+            new Map(
+              Array.from(branchMap.values())
+                .filter((account) => account.plGroup === group)
+                .map((account) => [account.accountCode, account])
+            ).values()
+          ).sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+
+          const branchValue = (branchKey: string, group: string, accountCode: string, period: string) =>
+            branchMap.get(`${branchKey}__${group}__${accountCode}`)?.byMonth[period] || 0;
+
+          const branchGroupValue = (branchKey: string, group: string, period: string) => {
+            let sum = 0;
+            for (const [key, account] of branchMap.entries()) {
+              if (key.startsWith(`${branchKey}__${group}__`)) {
+                sum += account.byMonth[period] || 0;
+              }
+            }
+            return sum;
+          };
+
+          const branchRevenue = (branchKey: string, period: string) => branchGroupValue(branchKey, 'INCOME', period);
+          const branchCOGS = (branchKey: string, period: string) => branchGroupValue(branchKey, 'COGS', period);
+          const branchOperating = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OPERATING', period);
+          const branchOtherExp = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OTHER_EXPENSE', period);
+          const branchGrossProfit = (branchKey: string, period: string) => branchRevenue(branchKey, period) - branchCOGS(branchKey, period);
+          const branchNetProfit = (branchKey: string, period: string) =>
+            branchGrossProfit(branchKey, period) - branchOperating(branchKey, period) - branchOtherExp(branchKey, period);
+
+          const branchSummary = (values: (branchKey: string, period: string) => number) => {
+            const branchTotals = comparisonBranchesExport.map((branch) =>
+              allMonthsExport.reduce((sum, period) => sum + values(branch.key, period), 0)
+            );
+            return {
+              total: branchTotals.reduce((sum, value) => sum + value, 0),
+              diff: branchTotals.length >= 2 ? branchTotals[branchTotals.length - 1] - branchTotals[0] : 0,
+            };
+          };
+
+          const makeBranchRow = (
+            label: string,
+            values: (branchKey: string, period: string) => number,
+            accountCode = ''
+          ): Record<string, unknown> => {
+            const summary = branchSummary(values);
+            return {
+              accountCode,
+              accountName: label,
+              ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, values(column.branchKey, column.period)])),
+              totalSum: summary.total,
+              diff: summary.diff,
+            };
+          };
+
+          const makeSectionRow = (label: string) => ({
+            accountCode: '',
+            accountName: `── ${label} ──`,
+            ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, ''])),
+            totalSum: '',
+            diff: '',
+          });
+
+          const rows: Record<string, unknown>[] = [];
+          const addGroup = (label: string, group: string, totalLabel: string, totalValues: (branchKey: string, period: string) => number) => {
+            rows.push(makeSectionRow(label));
+            uniqueAccounts(group).forEach((account) => {
+              rows.push(makeBranchRow(
+                account.accountName,
+                (branchKey, period) => branchValue(branchKey, group, account.accountCode, period),
+                account.accountCode
+              ));
+            });
+            rows.push(makeBranchRow(totalLabel, totalValues));
+          };
+
+          addGroup('รายได้', 'INCOME', 'รายได้รวม', branchRevenue);
+          addGroup('ต้นทุนขาย และหรือต้นทุนการให้บริการ', 'COGS', 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', branchCOGS);
+          rows.push(makeBranchRow('กำไรขั้นต้น', branchGrossProfit));
+          addGroup('ค่าใช้จ่ายในการบริหาร', 'OPERATING', 'รวมค่าใช้จ่ายในการบริหาร', branchOperating);
+
+          if (uniqueAccounts('OTHER_EXPENSE').length > 0) {
+            addGroup('ค่าใช้จ่ายอื่น', 'OTHER_EXPENSE', 'รวมค่าใช้จ่ายอื่น', branchOtherExp);
+          }
+
+          rows.push(makeBranchRow('กำไร (ขาดทุน) สุทธิ', branchNetProfit));
+
+          const branchHeaders: Record<string, string> = {
+            accountCode: 'รหัสบัญชี',
+            accountName: 'รายการ',
+            ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, formatPeriodLabelExport(column.period)])),
+            totalSum: 'ผลรวม',
+            diff: 'ผลต่าง',
+          };
+
+          const branchColumnGroups = [
+            { label: '', span: 2 },
+            ...comparisonBranchesExport.map((branch) => ({ label: branch.name, span: allMonthsExport.length })),
+            { label: '', span: 2 },
+          ];
+
+          const subtitle = plCompareA && plCompareB
+            ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+            : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
+
+          return () => exportStyledReport({
+            data: rows,
+            headers: branchHeaders,
+            filename: 'รายงานงบกำไรขาดทุน',
+            sheetName: 'Profit & Loss',
+            title: 'รายงานงบกำไรขาดทุน',
+            subtitle,
+            currencyColumns: branchPeriodKeys.map((column) => column.key).concat(['totalSum', 'diff']),
+            columnGroups: branchColumnGroups,
+          });
+        }
         
         const buildPLRows = () => {
           type Acc = { plGroup: string; accountCode: string; accountName: string; byMonth: Record<string, number> };
@@ -1621,7 +1795,7 @@ function AccountingReportContent() {
             return sumForPeriods(accs, periodsB) - sumForPeriods(accs, periodsA);
           };
 
-          const rows: Record<string, any>[] = [];
+          const rows: Record<string, unknown>[] = [];
           const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
           
           // INCOME
@@ -1945,9 +2119,17 @@ function AccountingReportContent() {
           const q = Math.ceil(m / 3);
           return `${y}-Q${q}`;
         };
+        const getHalfYearStr = (monthStr: string) => {
+          const y = monthStr.substring(0, 4);
+          const m = parseInt(monthStr.substring(5, 7), 10);
+          return `${y}-H${m <= 6 ? 1 : 2}`;
+        };
         const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
           if (plPeriodType === 'quarterly') {
             return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
+          }
+          if (plPeriodType === 'half-yearly') {
+            return pKey.includes('-') && getHalfYearStr(pKey) === filterStr;
           }
           return pKey === filterStr;
         };
@@ -1981,6 +2163,167 @@ function AccountingReportContent() {
 
         const allMonthsExportPdf = displayPeriods;
         const empty2 = (m: string) => [m, ''] as [string, string];
+        const formatPeriodLabelPdf = (pKey: string) => {
+          if (plPeriodType === 'yearly') return pKey;
+          return formatMonth(pKey);
+        };
+
+        const rowBranchKeysPdf = Array.from(new Set(plDetailRows.map((r) => r.branchKey).filter(Boolean))) as string[];
+        const comparisonBranchesPdf = (selectedBranches.includes('ALL')
+          ? availableBranches
+          : availableBranches.filter((branch) => selectedBranches.includes(branch.key)))
+          .filter((branch) => rowBranchKeysPdf.includes(branch.key));
+        const showBranchComparisonExportPdf = plViewMode === 'comparison' && comparisonBranchesPdf.length > 0;
+
+        if (showBranchComparisonExportPdf) {
+          type BranchAcc = {
+            branchKey: string;
+            plGroup: string;
+            accountCode: string;
+            accountName: string;
+            byMonth: Record<string, number>;
+          };
+
+          const branchMap = new Map<string, BranchAcc>();
+          for (const r of plDetailRows) {
+            const branchKey = r.branchKey || 'UNKNOWN';
+            const pKey = getPeriodKey(r.month);
+            const key = `${branchKey}__${r.plGroup}__${r.accountCode}`;
+            if (!branchMap.has(key)) {
+              branchMap.set(key, {
+                branchKey,
+                plGroup: r.plGroup,
+                accountCode: r.accountCode,
+                accountName: r.accountName,
+                byMonth: {},
+              });
+            }
+            const entry = branchMap.get(key)!;
+            entry.byMonth[pKey] = (entry.byMonth[pKey] || 0) + r.amount;
+          }
+
+          const branchPeriodKeys = comparisonBranchesPdf.flatMap((branch) =>
+            allMonthsExportPdf.map((period, periodIndex) => ({
+              key: `branch_${branch.key}_${period}_${periodIndex}`,
+              branchKey: branch.key,
+              period,
+            }))
+          );
+
+          const uniqueAccounts = (group: string) => Array.from(
+            new Map(
+              Array.from(branchMap.values())
+                .filter((account) => account.plGroup === group)
+                .map((account) => [account.accountCode, account])
+            ).values()
+          ).sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+
+          const branchValue = (branchKey: string, group: string, accountCode: string, period: string) =>
+            branchMap.get(`${branchKey}__${group}__${accountCode}`)?.byMonth[period] || 0;
+
+          const branchGroupValue = (branchKey: string, group: string, period: string) => {
+            let sum = 0;
+            for (const [key, account] of branchMap.entries()) {
+              if (key.startsWith(`${branchKey}__${group}__`)) {
+                sum += account.byMonth[period] || 0;
+              }
+            }
+            return sum;
+          };
+
+          const branchRevenue = (branchKey: string, period: string) => branchGroupValue(branchKey, 'INCOME', period);
+          const branchCOGS = (branchKey: string, period: string) => branchGroupValue(branchKey, 'COGS', period);
+          const branchOperating = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OPERATING', period);
+          const branchOtherExp = (branchKey: string, period: string) => branchGroupValue(branchKey, 'OTHER_EXPENSE', period);
+          const branchGrossProfit = (branchKey: string, period: string) => branchRevenue(branchKey, period) - branchCOGS(branchKey, period);
+          const branchNetProfit = (branchKey: string, period: string) =>
+            branchGrossProfit(branchKey, period) - branchOperating(branchKey, period) - branchOtherExp(branchKey, period);
+
+          const branchSummary = (values: (branchKey: string, period: string) => number) => {
+            const branchTotals = comparisonBranchesPdf.map((branch) =>
+              allMonthsExportPdf.reduce((sum, period) => sum + values(branch.key, period), 0)
+            );
+            return {
+              total: branchTotals.reduce((sum, value) => sum + value, 0),
+              diff: branchTotals.length >= 2 ? branchTotals[branchTotals.length - 1] - branchTotals[0] : 0,
+            };
+          };
+
+          const makeBranchRow = (
+            label: string,
+            values: (branchKey: string, period: string) => number,
+            accountCode = ''
+          ): Record<string, unknown> => {
+            const summary = branchSummary(values);
+            return {
+              accountCode,
+              accountName: label,
+              ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, values(column.branchKey, column.period)])),
+              totalSum: summary.total,
+              diff: summary.diff,
+            };
+          };
+
+          const makeSectionRow = (label: string) => ({
+            accountCode: '',
+            accountName: `── ${label} ──`,
+            ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, ''])),
+            totalSum: '',
+            diff: '',
+          });
+
+          const rows: Record<string, unknown>[] = [];
+          const addGroup = (label: string, group: string, totalLabel: string, totalValues: (branchKey: string, period: string) => number) => {
+            rows.push(makeSectionRow(label));
+            uniqueAccounts(group).forEach((account) => {
+              rows.push(makeBranchRow(
+                account.accountName,
+                (branchKey, period) => branchValue(branchKey, group, account.accountCode, period),
+                account.accountCode
+              ));
+            });
+            rows.push(makeBranchRow(totalLabel, totalValues));
+          };
+
+          addGroup('รายได้', 'INCOME', 'รายได้รวม', branchRevenue);
+          addGroup('ต้นทุนขาย และหรือต้นทุนการให้บริการ', 'COGS', 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', branchCOGS);
+          rows.push(makeBranchRow('กำไรขั้นต้น', branchGrossProfit));
+          addGroup('ค่าใช้จ่ายในการบริหาร', 'OPERATING', 'รวมค่าใช้จ่ายในการบริหาร', branchOperating);
+
+          if (uniqueAccounts('OTHER_EXPENSE').length > 0) {
+            addGroup('ค่าใช้จ่ายอื่น', 'OTHER_EXPENSE', 'รวมค่าใช้จ่ายอื่น', branchOtherExp);
+          }
+
+          rows.push(makeBranchRow('กำไร (ขาดทุน) สุทธิ', branchNetProfit));
+
+          const branchHeadersPdf: Record<string, string> = {
+            accountCode: 'รหัสบัญชี',
+            accountName: 'รายการ',
+            ...Object.fromEntries(branchPeriodKeys.map((column) => [column.key, formatPeriodLabelPdf(column.period)])),
+            totalSum: 'ผลรวม',
+            diff: 'ผลต่าง',
+          };
+
+          const branchColumnGroupsPdf = [
+            { label: '', span: 2 },
+            ...comparisonBranchesPdf.map((branch) => ({ label: branch.name, span: allMonthsExportPdf.length })),
+            { label: '', span: 2 },
+          ];
+
+          const subtitlePdf = plCompareA && plCompareB
+            ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+            : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
+
+          return () => exportStyledPdfReport({
+            data: rows,
+            headers: branchHeadersPdf,
+            filename: 'รายงานงบกำไรขาดทุน',
+            title: 'รายงานงบกำไรขาดทุน',
+            subtitle: subtitlePdf,
+            currencyColumns: branchPeriodKeys.map((column) => column.key).concat(['totalSum', 'diff']),
+            columnGroups: branchColumnGroupsPdf,
+          });
+        }
         
         const buildPLRowsPdf = () => {
           type Acc = { plGroup: string; accountCode: string; accountName: string; byMonth: Record<string, number> };
@@ -2005,7 +2348,7 @@ function AccountingReportContent() {
             return sumForPeriods(accs, periodsB) - sumForPeriods(accs, periodsA);
           };
 
-          const rows: Record<string, any>[] = [];
+          const rows: Record<string, unknown>[] = [];
           const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
           
           // INCOME
@@ -2285,6 +2628,8 @@ function AccountingReportContent() {
         return () => exportStyledPdfReport({
           data: accountProducts,
           headers: {
+            accountCode: 'รหัสผังบัญชี',
+            accountName: 'ผังบัญชี',
             docDate: 'วันที่',
             docNo: 'เลขที่เอกสาร',
             itemCode: 'รหัสสินค้า',
@@ -2367,7 +2712,7 @@ function AccountingReportContent() {
                 <SearchableSelect
                   value={plPeriodType}
                   onChange={(v) => { 
-                    setPlPeriodType(v as 'monthly' | 'quarterly' | 'yearly'); 
+                    setPlPeriodType(v as 'monthly' | 'quarterly' | 'half-yearly' | 'yearly'); 
                     setPlSelectedPeriods([]); 
                     setPlCompareA(''); 
                     setPlCompareB(''); 
@@ -2375,6 +2720,7 @@ function AccountingReportContent() {
                   options={[
                     { value: 'monthly', label: 'รายเดือน' },
                     { value: 'quarterly', label: 'รายไตรมาส' },
+                    { value: 'half-yearly', label: 'รายครึ่งปี' },
                     { value: 'yearly', label: 'รายปี' },
                   ]}
                   className="w-[120px]"
@@ -2397,10 +2743,15 @@ function AccountingReportContent() {
                           const q = Math.ceil(m / 3);
                           return `${y}-Q${q}`;
                         }
+                        if (plPeriodType === 'half-yearly') {
+                          const y = pKey.substring(0, 4);
+                          const m = parseInt(pKey.substring(5, 7), 10);
+                          return `${y}-H${m <= 6 ? 1 : 2}`;
+                        }
                         return pKey;
                       }))).sort().map(p => ({
                         value: p,
-                        label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : formatMonth(p)
+                        label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p)
                       }))
                     ]}
                     className="w-[150px]"
@@ -2424,8 +2775,13 @@ function AccountingReportContent() {
                           const q = Math.ceil(m / 3);
                           return `${y}-Q${q}`;
                         }
+                        if (plPeriodType === 'half-yearly') {
+                          const y = pKey.substring(0, 4);
+                          const m = parseInt(pKey.substring(5, 7), 10);
+                          return `${y}-H${m <= 6 ? 1 : 2}`;
+                        }
                         return pKey;
-                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : formatMonth(p) }))
+                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p) }))
                     ]}
                     className="w-[140px]"
                   />
@@ -2444,8 +2800,13 @@ function AccountingReportContent() {
                           const q = Math.ceil(m / 3);
                           return `${y}-Q${q}`;
                         }
+                        if (plPeriodType === 'half-yearly') {
+                          const y = pKey.substring(0, 4);
+                          const m = parseInt(pKey.substring(5, 7), 10);
+                          return `${y}-H${m <= 6 ? 1 : 2}`;
+                        }
                         return pKey;
-                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : formatMonth(p) }))
+                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p) }))
                     ]}
                     className="w-[140px]"
                   />

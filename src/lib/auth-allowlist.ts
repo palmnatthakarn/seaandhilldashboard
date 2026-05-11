@@ -22,7 +22,7 @@ export function isBootstrapAdminEmail(email?: string | null) {
 export async function isEmailAllowed(email?: string | null) {
   const normalized = normalizeEmail(email);
   if (!normalized) return false;
-  if (allowedEmailSet.has(normalized) || adminEmailSet.has(normalized)) return true;
+  if (adminEmailSet.has(normalized)) return true;
 
   await ensureAuthUserPolicyColumns();
 
@@ -32,5 +32,9 @@ export async function isEmailAllowed(email?: string | null) {
   });
 
   const row = result.rows[0] as Record<string, unknown> | undefined;
-  return Boolean(row && (row.enabled === true || row.enabled === 1 || row.enabled === "1"));
+  if (row) {
+    return row.enabled === true || row.enabled === 1 || row.enabled === "1";
+  }
+
+  return allowedEmailSet.has(normalized);
 }

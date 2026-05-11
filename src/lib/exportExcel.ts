@@ -23,6 +23,11 @@ export interface ExcelSummaryConfig {
   columns: SummaryColumnConfig;  // Which columns to summarize and how
 }
 
+export interface ExcelColumnGroup {
+  label: string;
+  span: number;
+}
+
 /**
  * Export data to Excel file with styling using ExcelJS
  * @param data - Array of objects to export
@@ -330,6 +335,7 @@ export async function exportStyledReport<T extends Record<string, any>>(
     currencyColumns?: string[]; // Column keys that should be formatted as currency
     percentColumns?: string[]; // Column keys that should be formatted as perce
     summaryConfig?: ExcelSummaryConfig;  // Summary row configuration
+    columnGroups?: ExcelColumnGroup[];
 
   }
 ): Promise<void> {
@@ -343,7 +349,8 @@ export async function exportStyledReport<T extends Record<string, any>>(
     numberColumns = [],
     currencyColumns = [],
     percentColumns = [],
-    summaryConfig
+    summaryConfig,
+    columnGroups,
   } = options;
 
   if (!data || data.length === 0) {
@@ -388,6 +395,45 @@ export async function exportStyledReport<T extends Record<string, any>>(
     currentRow++;
   }
 
+  if (columnGroups?.length) {
+    const groupRowNum = currentRow;
+    let colCursor = 1;
+
+    columnGroups.forEach((group) => {
+      const startCol = colCursor;
+      const endCol = colCursor + group.span - 1;
+
+      if (group.span > 1) {
+        worksheet.mergeCells(groupRowNum, startCol, groupRowNum, endCol);
+      }
+
+      const cell = worksheet.getCell(groupRowNum, startCol);
+      cell.value = group.label;
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4472C4' },
+      };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      for (let col = startCol; col <= endCol; col++) {
+        const borderCell = worksheet.getCell(groupRowNum, col);
+        borderCell.border = {
+          top: { style: 'thin', color: { argb: 'FF2F5496' } },
+          left: { style: 'thin', color: { argb: 'FF2F5496' } },
+          bottom: { style: 'thin', color: { argb: 'FF2F5496' } },
+          right: { style: 'thin', color: { argb: 'FF2F5496' } },
+        };
+      }
+
+      colCursor = endCol + 1;
+    });
+
+    worksheet.getRow(groupRowNum).height = 22;
+    currentRow++;
+  }
+
   // Add header row
   const headerRowNum = currentRow;
   headerValues.forEach((header, index) => {
@@ -414,7 +460,7 @@ export async function exportStyledReport<T extends Record<string, any>>(
   data.forEach((row, rowIndex) => {
     headerKeys.forEach((key, colIndex) => {
       const cell = worksheet.getCell(currentRow, colIndex + 1);
-      let value = row[key];
+      const value = row[key];
 
       // Apply number formatting
       if (currencyColumns.includes(key)) {
@@ -441,6 +487,7 @@ export async function exportStyledReport<T extends Record<string, any>>(
 
       cell.alignment = { 
         vertical: 'middle',
+        wrapText: true,
         horizontal: numberColumns.includes(key) || currencyColumns.includes(key) || percentColumns.includes(key) 
           ? 'right' 
           : 'left'

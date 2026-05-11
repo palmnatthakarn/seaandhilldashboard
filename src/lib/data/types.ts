@@ -405,6 +405,7 @@ export interface OverstockItem {
   itemName: string;
   brandName: string;
   categoryName: string;
+  unitCode: string;
   branchName: string;
   currentStock: number;
   qtyOnHand: number;

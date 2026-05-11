@@ -35,6 +35,7 @@ export async function GET(request: Request) {
 
     const query = `
       SELECT
+        branch_sync                                                AS branchKey,
         account_type                                              AS accountType,
         account_code                                             AS accountCode,
         account_name                                             AS accountName,
@@ -46,6 +47,7 @@ export async function GET(request: Request) {
                account_code LIKE '53%'
             OR account_code LIKE '54%'
             OR account_code LIKE '55%'
+            OR account_code LIKE '57%'
           )                                                       THEN 'OPERATING'
           ELSE 'OTHER_EXPENSE'
         END                                                      AS plGroup,
@@ -61,7 +63,7 @@ export async function GET(request: Request) {
       WHERE account_type IN ('INCOME', 'EXPENSES')
         AND date(doc_datetime) BETWEEN '${startDate}' AND '${endDate}'
         ${branchFilter}
-      GROUP BY accountType, accountCode, accountName, plGroup, month
+      GROUP BY branchKey, accountType, accountCode, accountName, plGroup, month
       HAVING amount != 0
       ORDER BY plGroup, accountCode ASC, month ASC
     `;
@@ -71,7 +73,7 @@ export async function GET(request: Request) {
         const result = await clickhouse.query({ query, format: 'JSONEachRow' });
         return result.json();
       },
-      ['accounting', 'profit-loss-detail-v2', startDate, endDate, ...branches],
+      ['accounting', 'profit-loss-detail-v4', startDate, endDate, ...branches],
       CacheDuration.MEDIUM
     );
 
