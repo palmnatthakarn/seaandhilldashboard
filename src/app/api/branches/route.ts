@@ -2,22 +2,14 @@ import { NextResponse } from 'next/server';
 import { clickhouse } from '@/lib/clickhouse';
 import { getCurrentBranchPolicy } from '@/lib/auth-policy';
 
-const BRANCH_MAPPING: Record<string, string> = {
-    'b000': 'บริษัท ช้าง สยาม กัมปนี จำกัด',
-    'b001': 'บริษัท ช้างสยามรวย จำกัด',
-    'b002': 'บริษัท ช้าง ทรัพย์ ทวี จำกัด',
-    'b003': 'บริษัท ชาวทะเลเฮฮา จำกัด',
-    'b004': 'บริษัท ดีจิงจัง 5665 จำกัด',
-    'b005': 'บริษัท ฮอมหัก จำกัด',
-};
-
 export async function GET() {
     try {
         const branchPolicy = await getCurrentBranchPolicy();
         const query = `
-            SELECT DISTINCT branch_sync
+            SELECT branch_sync, any(branch_sync_name) as branch_sync_name
             FROM saleinvoice_transaction
             WHERE branch_sync != ''
+            GROUP BY branch_sync
             ORDER BY branch_sync
         `;
 
@@ -29,13 +21,10 @@ export async function GET() {
         const data = await result.json();
         const allBranches = [
             { key: 'ALL', name: 'ทุกกิจการ' },
-            ...data.map((row: { branch_sync: string }) => {
-                const branchCode = row.branch_sync;
-                return {
-                    key: branchCode,
-                    name: BRANCH_MAPPING[branchCode] || `กิจการ ${branchCode}`,
-                };
-            }),
+            ...data.map((row: { branch_sync: string; branch_sync_name: string }) => ({
+                key: row.branch_sync,
+                name: row.branch_sync_name || `กิจการ ${row.branch_sync}`,
+            })),
         ];
 
         const branches = branchPolicy.isAdmin || branchPolicy.branches.includes('*')

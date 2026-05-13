@@ -1,19 +1,26 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, AlertTriangle, CheckCircle, Info, XCircle, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ArrowUpRight, Bell, AlertTriangle, CheckCircle, Info, XCircle, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import { useBranchStore } from '@/store/useBranchStore';
+import { setSelectedBranch } from '@/app/actions/branch-actions';
+import { useDateRangeStore } from '@/store/useDateRangeStore';
+import type { Alert } from '@/lib/data/dashboard';
 
-interface Alert {
-  id: number;
-  type: 'info' | 'warning' | 'success' | 'error';
-  title: string;
-  message: string;
-  timestamp?: string;
-}
+const READ_ALERTS_STORAGE_KEY = 'seaandhill:notification-read:v1';
+const ALERT_PREVIEW_LIMIT = 5;
+
+type AlertCategory = 'lowStock' | 'overstock' | 'overdue';
+
+const alertTabs: Array<{ key: AlertCategory; label: string }> = [
+  { key: 'lowStock', label: 'สินค้าใกล้หมด' },
+  { key: 'overstock', label: 'เกินคลัง' },
+  { key: 'overdue', label: 'ค้างชำระ' },
+];
 
 const alertConfig = {
   info: {
@@ -61,26 +68,88 @@ function formatRelativeTime(timestamp?: string): string {
   return `${diffDays} วันที่แล้ว`;
 }
 
+function readStoredAlertKeys(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+
+  try {
+    const raw = window.localStorage.getItem(READ_ALERTS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeStoredAlertKeys(keys: Set<string>) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(READ_ALERTS_STORAGE_KEY, JSON.stringify([...keys]));
+}
+
+function getBranchScope(selectedBranches: string[]) {
+  return selectedBranches.includes('ALL') ? 'ALL' : [...selectedBranches].sort().join(',');
+}
+
+function getAlertReadKey(alert: Alert, branchScope: string) {
+  return `${branchScope}:${alert.id}:${alert.type}:${alert.title}:${alert.message}`;
+}
+
+function getAlertCategory(alert: Alert): AlertCategory {
+  if (alert.category) return alert.category;
+
+  const text = `${alert.title} ${alert.message}`;
+
+  if (text.includes('ค้างชำระ') || text.includes('ลูกหนี้')) {
+    return 'overdue';
+  }
+
+  if (text.includes('เกินคลัง') || text.includes('> 90')) {
+    return 'overstock';
+  }
+
+  return 'lowStock';
+}
+
+function getAlertDestination(alert: Alert) {
+  const category = getAlertCategory(alert);
+
+  if (category === 'overdue') {
+    return '/reports/accounting?report=ar-aging';
+  }
+
+  if (category === 'overstock') {
+    return '/reports/inventory#overstock';
+  }
+
+  return '/reports/inventory#low-stock';
+}
+
 export function NotificationPanel() {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
-  const [readIds, setReadIds] = useState<Set<number>>(new Set());
-  const [mounted, setMounted] = useState(false);
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const [activeTab, setActiveTab] = useState<AlertCategory>('lowStock');
+  const [readAlertKeys, setReadAlertKeys] = useState<Set<string>>(() => readStoredAlertKeys());
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false
+  );
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const dateRange = useDateRangeStore((s) => s.dateRange);
   const selectedBranches = useBranchStore((s) => s.selectedBranches);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const setSelectedBranches = useBranchStore((s) => s.setSelectedBranches);
 
   // Fetch alerts from the same API as dashboard
   const { data } = useQuery({
-    queryKey: ['dashboardAlerts', selectedBranches],
+    queryKey: ['dashboardAlerts', selectedBranches, dateRange],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (!selectedBranches.includes('ALL')) {
         selectedBranches.forEach((b) => params.append('branch', b));
       }
+      params.append('startDate', dateRange.start);
+      params.append('endDate', dateRange.end);
       const queryParams = params.toString() ? `?${params.toString()}` : '';
       const res = await fetch(`/api/dashboard${queryParams}`);
       if (!res.ok) return { alerts: [] };
@@ -91,7 +160,24 @@ export function NotificationPanel() {
   });
 
   const alerts: Alert[] = data?.alerts || [];
-  const unreadCount = alerts.filter((a) => !readIds.has(a.id)).length;
+  const branchScope = useMemo(() => getBranchScope(selectedBranches), [selectedBranches]);
+  const unreadCount = alerts.filter((alert) => !readAlertKeys.has(getAlertReadKey(alert, branchScope))).length;
+  const alertCounts = useMemo(() => {
+    return alerts.reduce<Record<AlertCategory, number>>(
+      (acc, alert) => {
+        acc[getAlertCategory(alert)] += 1;
+        return acc;
+      },
+      { lowStock: 0, overstock: 0, overdue: 0 }
+    );
+  }, [alerts]);
+  const filteredAlerts = useMemo(
+    () => alerts.filter((alert) => getAlertCategory(alert) === activeTab),
+    [alerts, activeTab]
+  );
+  const hasMoreAlerts = filteredAlerts.length > ALERT_PREVIEW_LIMIT;
+  const visibleAlerts = showAllAlerts ? filteredAlerts : filteredAlerts.slice(0, ALERT_PREVIEW_LIMIT);
+  const hiddenAlertCount = Math.max(filteredAlerts.length - ALERT_PREVIEW_LIMIT, 0);
 
   // Close on outside click
   useEffect(() => {
@@ -120,12 +206,54 @@ export function NotificationPanel() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setShowAllAlerts(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setShowAllAlerts(false);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (alerts.length === 0 || alertCounts[activeTab] > 0) return;
+
+    const firstAvailableTab = alertTabs.find((tab) => alertCounts[tab.key] > 0);
+    if (firstAvailableTab) {
+      setActiveTab(firstAvailableTab.key);
+    }
+  }, [activeTab, alertCounts, alerts.length]);
+
   const markAllRead = () => {
-    setReadIds(new Set(alerts.map((a) => a.id)));
+    setReadAlertKeys((prev) => {
+      const next = new Set(prev);
+      alerts.forEach((alert) => next.add(getAlertReadKey(alert, branchScope)));
+      writeStoredAlertKeys(next);
+      return next;
+    });
   };
 
-  const markRead = (id: number) => {
-    setReadIds((prev) => new Set([...prev, id]));
+  const markRead = (alert: Alert) => {
+    setReadAlertKeys((prev) => {
+      const next = new Set(prev);
+      next.add(getAlertReadKey(alert, branchScope));
+      writeStoredAlertKeys(next);
+      return next;
+    });
+  };
+
+  const openAlertDetail = async (alert: Alert) => {
+    markRead(alert);
+
+    if (alert.branchSync) {
+      const nextBranches = [alert.branchSync];
+      setSelectedBranches(nextBranches);
+      await setSelectedBranch(nextBranches);
+    }
+
+    setIsOpen(false);
+    router.push(getAlertDestination(alert));
   };
 
   // Calculate panel position from button
@@ -149,13 +277,14 @@ export function NotificationPanel() {
       <div
         ref={panelRef}
         style={{ top: panelPos.top, right: panelPos.right }}
-        className="fixed z-[9999] w-[360px] max-h-[80vh] flex flex-col rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
+        className="fixed z-[9999] w-[520px] max-w-[calc(100vw-2rem)] max-h-[80vh] flex flex-col rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]">
-          <div className="flex items-center gap-2">
+        <div className="border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+          <div className="flex items-center justify-between gap-3 px-5 pt-4 pb-3">
+          <div className="flex min-w-0 items-center gap-2">
             <Bell className="h-5 w-5 text-[hsl(var(--primary))]" />
-            <span className="font-semibold text-[hsl(var(--foreground))]">การแจ้งเตือน</span>
+            <span className="text-base font-semibold text-[hsl(var(--foreground))]">Notifications</span>
             {unreadCount > 0 && (
               <span className="rounded-full bg-[hsl(var(--primary))] px-2 py-0.5 text-xs font-bold text-white">
                 {unreadCount}
@@ -166,7 +295,7 @@ export function NotificationPanel() {
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
-                className="text-xs text-[hsl(var(--primary))] hover:underline font-medium"
+                className="text-sm font-medium text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))]"
               >
                 อ่านทั้งหมด
               </button>
@@ -178,6 +307,38 @@ export function NotificationPanel() {
             >
               <X className="h-4 w-4 text-[hsl(var(--muted-foreground))]" />
             </button>
+          </div>
+          </div>
+          <div className="flex items-end gap-1 overflow-x-auto px-5">
+            {alertTabs.map((tab) => {
+              const isActive = activeTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className={cn(
+                    'relative flex min-w-0 items-center gap-2 px-2.5 pb-3 pt-1 text-sm font-semibold transition-colors',
+                    isActive
+                      ? 'text-[hsl(var(--foreground))]'
+                      : 'text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]'
+                  )}
+                >
+                  <span className="truncate">{tab.label}</span>
+                  <span className={cn(
+                    'rounded-full px-1.5 py-0.5 text-[10px] font-bold',
+                    isActive
+                      ? 'bg-[hsl(var(--foreground))] text-[hsl(var(--background))]'
+                      : 'bg-[hsl(var(--muted))] text-[hsl(var(--muted-foreground))]'
+                  )}>
+                    {alertCounts[tab.key]}
+                  </span>
+                  {isActive && (
+                    <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-[hsl(var(--foreground))]" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -191,49 +352,75 @@ export function NotificationPanel() {
               <p className="text-sm font-medium text-[hsl(var(--foreground))]">ไม่มีการแจ้งเตือน</p>
               <p className="text-xs text-[hsl(var(--muted-foreground))]">ทุกอย่างเรียบร้อยดี!</p>
             </div>
+          ) : filteredAlerts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[hsl(var(--muted))]">
+                <Bell className="h-6 w-6 text-[hsl(var(--muted-foreground))]" />
+              </div>
+              <p className="text-sm font-medium text-[hsl(var(--foreground))]">ไม่มีรายการในหมวดนี้</p>
+              <p className="text-xs text-[hsl(var(--muted-foreground))]">ลองเลือกหมวดอื่นเพื่อดูการแจ้งเตือน</p>
+            </div>
           ) : (
             <div className="divide-y divide-[hsl(var(--border))]">
-              {alerts.map((alert) => {
+              {visibleAlerts.map((alert) => {
                 const config = alertConfig[alert.type];
                 const Icon = config.icon;
-                const isRead = readIds.has(alert.id);
+                const isRead = readAlertKeys.has(getAlertReadKey(alert, branchScope));
 
                 return (
                   <button
                     key={alert.id}
-                    onClick={() => markRead(alert.id)}
+                    onClick={() => void openAlertDetail(alert)}
                     className={cn(
-                      'w-full text-left flex gap-4 px-5 py-4 transition-colors hover:bg-[hsl(var(--muted)/50)]',
+                      'w-full text-left flex gap-3 px-4 py-3 transition-colors hover:bg-[hsl(var(--muted)/50)]',
                       'border-l-[3px]',
                       isRead ? 'border-l-transparent opacity-60' : config.border
                     )}
                   >
                     {/* Icon */}
                     <div className={cn(
-                      'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                      'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                       config.bg, config.color
                     )}>
-                      <Icon className="h-5 w-5" />
+                      <Icon className="h-4 w-4" />
                     </div>
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-semibold text-[hsl(var(--foreground))] leading-tight">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-sm font-semibold leading-tight text-[hsl(var(--foreground))]">
                           {alert.title}
                         </p>
                         {!isRead && (
-                          <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', config.dot)} />
+                          <span className={cn('h-2 w-2 shrink-0 rounded-full', config.dot)} />
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-[hsl(var(--muted-foreground))] leading-relaxed line-clamp-2">
+
+                      {(alert.branchName || alert.timestamp) && (
+                        <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] text-[hsl(var(--muted-foreground))]">
+                          {alert.branchName && (
+                            <span className="min-w-0 truncate font-medium">
+                              {alert.branchName}
+                            </span>
+                          )}
+                          {alert.branchName && alert.timestamp && (
+                            <span className="shrink-0 text-[hsl(var(--border))]">•</span>
+                          )}
+                          {alert.timestamp && (
+                            <span className="shrink-0">
+                              {formatRelativeTime(alert.timestamp)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <p className="mt-1 line-clamp-2 text-xs leading-snug text-[hsl(var(--muted-foreground))]">
                         {alert.message}
                       </p>
-                      {alert.timestamp && (
-                        <p className="mt-1.5 text-[10px] text-[hsl(var(--muted-foreground))]">
-                          {formatRelativeTime(alert.timestamp)}
-                        </p>
-                      )}
+                      <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-[hsl(var(--primary))/10] px-2 py-0.5 text-[10px] font-semibold text-[hsl(var(--primary))]">
+                        <span>{alert.actionLabel || 'ดูรายละเอียด'}</span>
+                        <ArrowUpRight className="h-3 w-3" />
+                      </div>
                     </div>
                   </button>
                 );
@@ -244,13 +431,21 @@ export function NotificationPanel() {
 
         {/* Footer */}
         {alerts.length > 0 && (
-          <div className="border-t border-[hsl(var(--border))] bg-[hsl(var(--muted)/30)] px-5 py-3 flex items-center justify-between">
-            <p className="text-xs text-[hsl(var(--muted-foreground))]">
-              {alerts.length} รายการทั้งหมด
+          <div className="border-t border-[hsl(var(--border))] bg-[hsl(var(--muted)/30)] px-5 py-3 flex items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-xs text-[hsl(var(--muted-foreground))]">
+              {showAllAlerts || !hasMoreAlerts
+                ? `${filteredAlerts.length} รายการในหมวดนี้`
+                : `แสดง ${visibleAlerts.length} จาก ${filteredAlerts.length} รายการ`}
             </p>
-            <button className="text-xs font-medium text-[hsl(var(--primary))] hover:underline">
-              ดูทั้งหมด
-            </button>
+            {hasMoreAlerts && (
+              <button
+                type="button"
+                onClick={() => setShowAllAlerts((prev) => !prev)}
+                className="shrink-0 text-xs font-medium text-[hsl(var(--primary))] hover:underline"
+              >
+                {showAllAlerts ? 'ย่อกลับ' : `ดูทั้งหมด (+${hiddenAlertCount})`}
+              </button>
+            )}
           </div>
         )}
       </div>

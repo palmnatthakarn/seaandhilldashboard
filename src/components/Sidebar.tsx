@@ -190,7 +190,7 @@ export function Sidebar() {
             {/* Toggle Button — desktop only */}
             <button
                 onClick={toggleSidebar}
-                className="hidden lg:flex absolute -right-3 top-13 h-6 w-6 rounded-full bg-[hsl(var(--primary))] text-white shadow-lg items-center justify-center hover:scale-110 transition-transform z-50"
+                className="hidden lg:flex absolute -right-3 top-[3.25rem] h-6 w-6 rounded-full bg-[hsl(var(--primary))] text-white shadow-lg items-center justify-center hover:scale-110 transition-transform z-50"
             >
                 {isCollapsed ? (
                     <ChevronRight className="h-4 w-4" />
@@ -368,25 +368,34 @@ export function Sidebar() {
 
             {/* User Profile */}
             <div className={cn(
-                "p-4 m-3 mt-2 rounded-2xl bg-white/5 border border-white/5 backdrop-blur-sm transition-all duration-300",
-                displayCollapsed && "p-2 m-2"
+                "bg-[hsl(var(--card))] p-3 transition-all duration-300",
+                displayCollapsed && "p-2"
             )}>
-                <div className={cn(
-                    "flex items-center",
-                    displayCollapsed ? "justify-center" : "space-x-3"
-                )}>
-                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-inner ring-2 ring-white/10 flex-shrink-0">
-                        <span className="text-xs font-bold text-white">
-                            {displayInitials}
-                        </span>
+                <div
+                    title={displayCollapsed ? `${displayName} ${displayEmail}` : undefined}
+                    className={cn(
+                        "flex min-w-0 items-center",
+                        displayCollapsed ? "justify-center p-2" : "gap-3 px-3 py-3"
+                    )}
+                >
+                    <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-md shadow-indigo-500/20">
+                        {displayInitials}
+                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[hsl(var(--background))] bg-emerald-500" />
                     </div>
                     {!displayCollapsed && (
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-white truncate">
-                                {displayName}
-                            </p>
-                            <p className="text-xs text-slate-400 truncate">
-                                {displayEmail || 'Loading...'}
+                        <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                                <p className="min-w-0 truncate text-sm font-semibold text-[hsl(var(--foreground))]" title={displayName}>
+                                    {displayName}
+                                </p>
+                                {isAdmin && (
+                                    <span className="shrink-0 rounded-full bg-[hsl(var(--primary))]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[hsl(var(--primary))]">
+                                        Admin
+                                    </span>
+                                )}
+                            </div>
+                            <p className="mt-0.5 truncate text-xs text-[hsl(var(--muted-foreground))]" title={displayEmail}>
+                                {displayEmail || 'กำลังโหลดข้อมูล'}
                             </p>
                         </div>
                     )}

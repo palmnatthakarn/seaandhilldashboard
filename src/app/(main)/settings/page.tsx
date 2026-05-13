@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, Loader2, Plus, Save, ShieldCheck, Trash2, UserCog, X } from "lucide-react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, Loader2, Mail, Pencil, Plus, Search, ShieldCheck, SlidersHorizontal, Trash2, UserPlus, Users, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -37,8 +37,52 @@ const ROLE_OPTIONS: Array<{ value: AppRole; label: string }> = [
   { value: "admin", label: "Admin" },
 ];
 
+const ROLE_FILTER_OPTIONS: Array<{ value: "all" | AppRole; label: string }> = [
+  { value: "all", label: "All roles" },
+  ...ROLE_OPTIONS,
+];
+
+const STATUS_FILTER_OPTIONS: Array<{ value: "all" | "enabled" | "disabled"; label: string }> = [
+  { value: "all", label: "All status" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+];
+
+const AVATAR_COLORS = [
+  "bg-sky-100 text-sky-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-amber-100 text-amber-700",
+  "bg-rose-100 text-rose-700",
+  "bg-violet-100 text-violet-700",
+  "bg-cyan-100 text-cyan-700",
+];
+
 function normalizeBranchSelection(branches: string[]) {
   return branches.includes("*") ? ["*"] : [...new Set(branches)];
+}
+
+function getInitials(user: ManagedUser) {
+  const source = (user.name || user.email.split("@")[0] || "?").trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  const initials = parts.length > 1
+    ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`
+    : source.slice(0, 2);
+
+  return initials.toUpperCase();
+}
+
+function getBranchLabel(user: ManagedUser, branches: BranchInfo[]) {
+  if (user.role === "admin" || user.allowed_branches.includes("*")) {
+    return "ทุกกิจการ";
+  }
+
+  const selected = branches
+    .filter((branch) => user.allowed_branches.includes(branch.key))
+    .map((branch) => branch.name);
+
+  if (selected.length === 0) return "ยังไม่เลือกกิจการ";
+  if (selected.length === 1) return selected[0];
+  return `เลือกแล้ว ${selected.length} กิจการ`;
 }
 
 export default function SettingsPage() {
@@ -51,11 +95,30 @@ export default function SettingsPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState<AppRole>("user");
   const [newBranches, setNewBranches] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | AppRole>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "enabled" | "disabled">("all");
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<ManagedUser | null>(null);
 
   const branchOptions = useMemo(
     () => branches.filter((branch) => branch.key !== "ALL"),
     [branches]
   );
+
+  const filteredUsers = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return users.filter((user) => {
+      const matchesSearch = !normalizedSearch
+        || user.name.toLowerCase().includes(normalizedSearch)
+        || user.email.toLowerCase().includes(normalizedSearch);
+      const matchesRole = roleFilter === "all" || user.role === roleFilter;
+      const matchesStatus = statusFilter === "all"
+        || (statusFilter === "enabled" ? user.enabled : !user.enabled);
+
+      return matchesSearch && matchesRole && matchesStatus;
+    });
+  }, [roleFilter, searchTerm, statusFilter, users]);
 
   const showToast = useCallback((type: ToastState["type"], message: string) => {
     setToast({ type, message });
@@ -171,17 +234,23 @@ export default function SettingsPage() {
 
       setUsers((current) => current.map((item) => (item.email === user.email ? json.data! : item)));
       showToast("success", "บันทึกข้อมูลแล้ว");
+      return true;
     } catch (err) {
       showToast("error", err instanceof Error ? err.message : "บันทึกข้อมูลไม่สำเร็จ");
+      return false;
     } finally {
       setSavingEmail(null);
     }
   }
 
   async function deleteUser(user: ManagedUser) {
-    const confirmed = window.confirm(`ลบผู้ใช้ ${user.email} ออกจากระบบใช่หรือไม่?`);
-    if (!confirmed) return;
+    setConfirmDeleteUser(user);
+  }
 
+  async function executeDeleteUser() {
+    if (!confirmDeleteUser) return;
+    const user = confirmDeleteUser;
+    setConfirmDeleteUser(null);
     setDeletingEmail(user.email);
 
     try {
@@ -217,7 +286,7 @@ export default function SettingsPage() {
             </div>
             <h1 className="text-2xl font-bold text-[hsl(var(--foreground))]">จัดการผู้ใช้และสิทธิ์ข้อมูล</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-[hsl(var(--muted-foreground))]">
-              เพิ่มอีเมลที่เข้าใช้งานได้ กำหนด role และจำกัดสาขาที่ผู้ใช้เห็นใน dashboard
+              เพิ่มอีเมลที่เข้าใช้งานได้ กำหนดบทบาท และจำกัดสาขาที่ผู้ใช้เห็นใน Dashboard
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
@@ -238,6 +307,7 @@ export default function SettingsPage() {
       </section>
 
       <section className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5 shadow-sm">
+      
         <form className="grid gap-4 lg:grid-cols-[1fr_160px_1.5fr_auto]" onSubmit={createUser}>
           <label className="space-y-2">
             <span className="text-xs font-semibold text-[hsl(var(--muted-foreground))]">Email</span>
@@ -281,8 +351,43 @@ export default function SettingsPage() {
           </button>
         </form>
       </section>
-
+      <section className = "space-y-7">
+           <div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_160px_160px] xl:w-[680px]">
+              <label className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" />
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="ค้นหาชื่อหรืออีเมล"
+                  className="h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                />
+              </label>
+              <label className="relative">
+                <SlidersHorizontal className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" />
+                <select
+                  value={roleFilter}
+                  onChange={(event) => setRoleFilter(event.target.value as "all" | AppRole)}
+                  className="h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                >
+                  {ROLE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as "all" | "enabled" | "disabled")}
+                className="h-10 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              >
+                {STATUS_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
+        </section>
       <section className="overflow-hidden rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] shadow-sm">
+        
         {loading ? (
           <div className="flex h-40 items-center justify-center gap-3 text-sm text-[hsl(var(--muted-foreground))]">
             <Loader2 className="h-5 w-5 animate-spin" />
@@ -297,14 +402,15 @@ export default function SettingsPage() {
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Allowed branches</th>
-                  <th className="px-4 py-3 text-center0kd">Action</th>
+                  <th className="px-4 py-3 text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[hsl(var(--border))]">
-                {users.map((user) => (
+                {filteredUsers.map((user, index) => (
                   <UserRow
                     key={user.id || user.email}
                     user={user}
+                    avatarClassName={AVATAR_COLORS[index % AVATAR_COLORS.length]}
                     branches={branchOptions}
                     saving={savingEmail === user.email}
                     deleting={deletingEmail === user.email}
@@ -315,9 +421,50 @@ export default function SettingsPage() {
                 ))}
               </tbody>
             </table>
+            {filteredUsers.length === 0 && (
+              <div className="flex h-32 items-center justify-center text-sm text-[hsl(var(--muted-foreground))]">
+                ไม่พบผู้ใช้ที่ตรงกับเงื่อนไข
+              </div>
+            )}
           </div>
         )}
       </section>
+      {confirmDeleteUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="w-[380px] max-w-[calc(100vw-2rem)] rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-500/10">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <p className="font-semibold text-[hsl(var(--foreground))]">ยืนยันการลบ</p>
+                <p className="mt-0.5 text-xs text-[hsl(var(--muted-foreground))]">การกระทำนี้ไม่สามารถย้อนกลับได้</p>
+              </div>
+            </div>
+            <p className="mb-6 text-sm text-[hsl(var(--muted-foreground))]">
+              ต้องการลบผู้ใช้{" "}
+              <span className="font-semibold text-[hsl(var(--foreground))]">{confirmDeleteUser.email}</span>{" "}
+              ออกจากระบบ?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteUser(null)}
+                className="rounded-lg border border-[hsl(var(--border))] px-4 py-2 text-sm font-medium transition hover:bg-[hsl(var(--muted))]"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => void executeDeleteUser()}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-700"
+              >
+                ลบผู้ใช้
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -465,8 +612,10 @@ function BranchPicker({
   );
 }
 
+
 function UserRow({
   user,
+  avatarClassName,
   branches,
   saving,
   deleting,
@@ -475,127 +624,189 @@ function UserRow({
   toggleBranch,
 }: {
   user: ManagedUser;
+  avatarClassName: string;
   branches: BranchInfo[];
   saving: boolean;
   deleting: boolean;
-  onSave: (user: ManagedUser, patch: Partial<ManagedUser>) => Promise<void>;
+  onSave: (user: ManagedUser, patch: Partial<ManagedUser>) => Promise<boolean>;
   onDelete: (user: ManagedUser) => Promise<void>;
   toggleBranch: (current: string[], branchKey: string) => string[];
 }) {
   const [draft, setDraft] = useState(user);
-
-  useEffect(() => {
-    setDraft(user);
-  }, [user]);
+  const [editing, setEditing] = useState(false);
 
   const isAdmin = draft.role === "admin";
+  const branchLabel = getBranchLabel(user, branches);
+
+  async function saveDraft() {
+    const saved = await onSave(user, draft);
+    if (saved) {
+      setEditing(false);
+    }
+  }
 
   return (
-    <tr>
+    <tr className={cn("align-top transition", editing && "bg-[hsl(var(--muted))]/20")}>
       <td className="px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[hsl(var(--primary))]/10 text-[hsl(var(--primary))]">
-            <UserCog className="h-5 w-5" />
+        <div className="flex min-w-0 items-center gap-3">
+          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", avatarClassName)}>
+            {getInitials(user)}
           </div>
-          <div className="grid min-w-[250px] gap-2">
-            <input
-              type="text"
-              value={draft.name}
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Name"
-              className="h-9 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-            />
-            <input
-              type="email"
-              value={draft.email}
-              onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}
-              placeholder="email@example.com"
-              className="h-9 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-xs outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-            />
-          </div>
+          {editing ? (
+            <div className="grid min-w-[260px] max-w-[360px] flex-1 gap-2">
+              <input
+                type="text"
+                value={draft.name}
+                onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Name"
+                className="h-9 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+              />
+              <div className="relative">
+                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[hsl(var(--muted-foreground))]" />
+                <input
+                  type="email"
+                  value={draft.email}
+                  onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}
+                  placeholder="email@example.com"
+                  className="h-9 w-full rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-3 text-xs outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="min-w-0 max-w-[360px]">
+              <p className="truncate font-semibold text-[hsl(var(--foreground))]" title={user.name || user.email}>
+                {user.name || user.email.split("@")[0]}
+              </p>
+              <p className="truncate text-xs text-[hsl(var(--muted-foreground))]" title={user.email}>
+                {user.email}
+              </p>
+            </div>
+          )}
         </div>
       </td>
       <td className="px-4 py-4">
-        <select
-          value={draft.role}
-          onChange={(event) => {
-            const role = event.target.value as AppRole;
-            setDraft((current) => ({
-              ...current,
-              role,
-              allowed_branches: role === "admin" ? ["*"] : current.allowed_branches.filter((branch) => branch !== "*"),
-            }));
-          }}
-          className="h-9 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
-        >
-          {ROLE_OPTIONS.map((role) => (
-            <option key={role.value} value={role.value}>{role.label}</option>
-          ))}
-        </select>
-      </td>
-      <td className="px-4 py-4">
-        <div className="inline-flex items-center gap-3 text-sm">
-          <Switch
-            checked={draft.enabled}
-            disabled={saving || deleting}
-            onCheckedChange={(checked) => {
-              const nextDraft = { ...draft, enabled: checked };
-              setDraft(nextDraft);
-              void onSave(user, nextDraft);
+        {editing ? (
+          <select
+            value={draft.role}
+            onChange={(event) => {
+              const role = event.target.value as AppRole;
+              setDraft((current) => ({
+                ...current,
+                role,
+                allowed_branches: role === "admin" ? ["*"] : current.allowed_branches.filter((branch) => branch !== "*"),
+              }));
             }}
-            aria-label="เปลี่ยนสถานะผู้ใช้"
-          />
-          <span>{draft.enabled ? "เปิดใช้งาน" : "ปิดใช้งาน"}</span>
-        </div>
+            className="h-9 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 text-sm outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+          >
+            {ROLE_OPTIONS.map((role) => (
+              <option key={role.value} value={role.value}>{role.label}</option>
+            ))}
+          </select>
+        ) : (
+          <span className="inline-flex rounded-full bg-[hsl(var(--muted))] px-2.5 py-1 text-xs font-semibold capitalize text-[hsl(var(--foreground))]">
+            {user.role}
+          </span>
+        )}
       </td>
       <td className="px-4 py-4">
-        <BranchPicker
-          branches={branches}
-          selected={isAdmin ? ["*"] : draft.allowed_branches}
-          disabled={isAdmin}
-          onToggle={(branchKey) =>
-            setDraft((current) => ({
-              ...current,
-              allowed_branches: toggleBranch(current.allowed_branches, branchKey),
-            }))
-          }
-        />
+        {editing ? (
+          <div className="inline-flex items-center gap-3 text-sm">
+            <Switch
+              checked={draft.enabled}
+              disabled={saving || deleting}
+              onCheckedChange={(checked) => setDraft((current) => ({ ...current, enabled: checked }))}
+              aria-label="เปลี่ยนสถานะผู้ใช้"
+            />
+            <span>{draft.enabled ? "Enabled" : "Disabled"}</span>
+          </div>
+        ) : (
+          <span className="inline-flex items-center gap-2 text-sm text-[hsl(var(--foreground))]">
+            <span className={cn("h-2.5 w-2.5 rounded-full", user.enabled ? "bg-emerald-500" : "bg-slate-300")} />
+            {user.enabled ? "Enabled" : "Disabled"}
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-4">
+        {editing ? (
+          <BranchPicker
+            branches={branches}
+            selected={isAdmin ? ["*"] : draft.allowed_branches}
+            disabled={isAdmin}
+            onToggle={(branchKey) =>
+              setDraft((current) => ({
+                ...current,
+                allowed_branches: toggleBranch(current.allowed_branches, branchKey),
+              }))
+            }
+          />
+        ) : (
+          <p className="max-w-[280px] truncate text-sm text-[hsl(var(--foreground))]" title={branchLabel}>
+            {branchLabel}
+          </p>
+        )}
       </td>
       <td className="px-4 py-4">
         <div className="flex justify-end gap-2">
-          {/* ปุ่มบันทึก */}
-          <div className="relative group">
-            <button
-              type="button"
-              disabled={saving || deleting}
-              onClick={() => onSave(user, draft)}
-              aria-label="บันทึก"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition hover:bg-[hsl(var(--accent))] disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            </button>
-            <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-neutral-900 px-2 py-1 text-xs text-white opacity-0 transition group-hover:opacity-100">
-              บันทึก
-            </span>
-          </div>
-
-          {/* ปุ่มลบ */}
-          <div className="relative group">
-            <button
-              type="button"
-              disabled={saving || deleting}
-              onClick={() => onDelete(user)}
-              aria-label="ลบ"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-60"
-            >
-              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            </button>
-            <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-neutral-900 px-2 py-1 text-xs text-white opacity-0 transition group-hover:opacity-100">
-              ลบ
-            </span>
-          </div>
+          {editing ? (
+            <>
+              <TooltipButton label="บันทึก" disabled={saving || deleting} onClick={saveDraft} className="text-emerald-700 hover:bg-emerald-50">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              </TooltipButton>
+              <TooltipButton
+                label="ยกเลิก"
+                disabled={saving || deleting}
+                onClick={() => {
+                  setDraft(user);
+                  setEditing(false);
+                }}
+              >
+                <X className="h-4 w-4" />
+              </TooltipButton>
+            </>
+          ) : (
+            <TooltipButton label="แก้ไข" disabled={saving || deleting} onClick={() => setEditing(true)}>
+              <Pencil className="h-4 w-4" />
+            </TooltipButton>
+          )}
+          <TooltipButton label="ลบ" disabled={saving || deleting} onClick={() => onDelete(user)} className="text-rose-600 hover:bg-rose-50">
+            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          </TooltipButton>
         </div>
       </td>
     </tr>
+  );
+}
+
+function TooltipButton({
+  label,
+  children,
+  disabled,
+  onClick,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onClick}
+        aria-label={label}
+        className={cn(
+          "inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm font-semibold transition hover:bg-[hsl(var(--accent))] disabled:opacity-60",
+          className
+        )}
+      >
+        {children}
+      </button>
+      <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-neutral-900 px-2 py-1 text-xs text-white opacity-0 transition group-hover:opacity-100">
+        {label}
+      </span>
+    </div>
   );
 }

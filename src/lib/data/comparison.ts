@@ -28,15 +28,6 @@ export interface BranchComparisonData {
   monthlySales: Array<{ month: string; sales: number }>;
 }
 
-// Branch mapping configuration (duplicated from api/branches/route.ts to keep data layer independent)
-const BRANCH_MAPPING: Record<string, string> = {
-  'b000': 'บริษัท ช้าง สยาม กัมปนี จำกัด',
-  'b001': 'บริษัท ช้างสยามรวย จำกัด',
-  'b002': 'บริษัท ช้าง ทรัพย์ ทวี จำกัด',
-  'b003': 'บริษัท ชาวทะเลเฮฮา จำกัด',
-  'b004': 'บริษัท ดีจิงจัง 5665 จำกัด',
-  'b005': 'บริษัท ฮอมฮัก จำกัด',
-};
 
 // Helper to build branch filter
 function buildBranchFilter(branches?: string[]): { sql: string; params: Record<string, any> } {
@@ -224,6 +215,13 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       GROUP BY stock.wh_code
     `;
 
+    const branchNameQuery = `
+      SELECT branch_sync, any(branch_sync_name) as branch_sync_name
+      FROM saleinvoice_transaction
+      WHERE branch_sync != ''
+      GROUP BY branch_sync
+    `;
+
     const [
       salesResult,
       expenseResult,
@@ -232,7 +230,8 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       customerResult,
       topProductsResult,
       trendResult,
-      deadStockResult
+      deadStockResult,
+      branchNameResult,
     ] = await Promise.all([
       clickhouse.query({
         query: salesQuery,
@@ -274,6 +273,10 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
         query_params: { currentEnd, ...filterParams },
         format: 'JSONEachRow',
       }),
+      clickhouse.query({
+        query: branchNameQuery,
+        format: 'JSONEachRow',
+      }),
     ]);
 
     const salesData = await salesResult.json();
@@ -284,6 +287,14 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     const topProductsData = await topProductsResult.json();
     const trendData = await trendResult.json();
     const deadStockData = await deadStockResult.json();
+    const branchNameRows = await branchNameResult.json() as Array<{ branch_sync: string; branch_sync_name: string }>;
+
+    const branchNameMap: Record<string, string> = {};
+    branchNameRows.forEach((row) => {
+      if (row.branch_sync) {
+        branchNameMap[row.branch_sync] = row.branch_sync_name || `กิจการ ${row.branch_sync}`;
+      }
+    });
 
     // Map data for easy lookup
     const salesMap = new Map();
@@ -335,20 +346,19 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
 
     // Consolidate branch keys – only include selected branches (or all if 'ALL')
     const wantedKeys = (!branchSync || branchSync.length === 0 || branchSync.includes('ALL'))
-      ? Object.keys(BRANCH_MAPPING)
-      : branchSync.filter(k => BRANCH_MAPPING[k]);
+      ? Object.keys(branchNameMap)
+      : branchSync;
 
     const allBranches = new Set([
       ...salesMap.keys(),
       ...expenseMap.keys(),
-      ...wantedKeys // Only include branches the user asked for
+      ...wantedKeys,
     ]);
 
     const comparisonData: BranchComparisonData[] = [];
 
     allBranches.forEach((key) => {
-      // Filter out empty or unknown keys if necessary, but here we include all strictly
-      if (!BRANCH_MAPPING[key]) return; // Skip if not in our known list (optional)
+      if (!key) return;
 
       const sales = salesMap.get(key);
       const expense = expenseMap.get(key);
@@ -395,7 +405,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
 
       comparisonData.push({
         branchKey: key,
-        branchName: BRANCH_MAPPING[key] || `กิจการ ${key}`,
+        branchName: branchNameMap[key] ?? `กิจการ ${key}`,
         totalSales: currentSalesVal,
         totalOrders: totalOrders,
         totalExpense: currentExpenseVal,

@@ -17,13 +17,7 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate');
     const salesLimit = parseInt(searchParams.get('salesLimit') || '10', 10);
     
-    let normalizedBranches = branches;
-    if (branches.length === 0) {
-      normalizedBranches = ['ALL'];
-    } else if (branches.length === 1 && branches[0].includes(',')) {
-      normalizedBranches = branches[0].split(',');
-    }
-    normalizedBranches = await getAuthorizedBranches(new URLSearchParams(searchParams));
+    const normalizedBranches = await getAuthorizedBranches(new URLSearchParams(searchParams));
 
     const dateRange = startDate && endDate ? { start: startDate, end: endDate } : undefined;
 
@@ -32,7 +26,7 @@ export async function GET(request: NextRequest) {
         const [kpis, recentSales, alerts] = await Promise.all([
           getDashboardKPIs(normalizedBranches, dateRange),
           getRecentSales(normalizedBranches, dateRange, salesLimit),
-          getDashboardAlerts(normalizedBranches),
+          getDashboardAlerts(normalizedBranches, dateRange),
         ]);
 
         return {

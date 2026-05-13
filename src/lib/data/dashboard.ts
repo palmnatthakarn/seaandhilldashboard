@@ -49,11 +49,22 @@ export interface RecentSale {
 
 export interface Alert {
   id: number;
-  type: 'info' | 'warning' | 'error';  // ตรงกับ alertConfig ใน AlertsCard.tsx
+  type: 'info' | 'warning' | 'success' | 'error';
   title: string;
   message: string;
-  severity: 'info' | 'warning' | 'error';
-  timestamp: string;
+  severity?: 'info' | 'warning' | 'success' | 'error';
+  timestamp?: string;
+  branchSync?: string;
+  branchName?: string;
+  category?: 'lowStock' | 'overstock' | 'overdue';
+  count?: number;
+  amount?: number;
+  actionLabel?: string;
+}
+
+function getAlertId(typeId: number, branchSync: string) {
+  const hash = [...branchSync].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return typeId * 1000 + hash;
 }
 
 // Helper to build branch filter
@@ -397,7 +408,7 @@ export async function getRecentSales(branchSync?: string[], dateRange?: DateRang
  * Get Dashboard Alerts
  * ดึงการแจ้งเตือนสำคัญต่างๆ
  */
-export async function getDashboardAlerts(branchSync?: string[]): Promise<Alert[]> {
+export async function getDashboardAlerts(branchSync?: string[], dateRange?: DateRange): Promise<Alert[]> {
   try {
     const alerts: Alert[] = [];
     const today = new Date().toISOString().split('T')[0];
@@ -407,9 +418,10 @@ export async function getDashboardAlerts(branchSync?: string[]): Promise<Alert[]
     // ใช้ subquery GROUP BY item_code เพื่อนับจำนวนสินค้า (SKU)
     // threshold = Days on Hand <= 7 (อิงจากอัตราขายย้อนหลัง 30 วัน)
     const lowStockQuery = `
-      SELECT count(*) as count
+      SELECT branch_sync, count(*) as count
       FROM (
         SELECT
+          branch_sync,
           item_code,
           sum(qty) as totalQty,
           abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate({today:String}) - INTERVAL 30 DAY)) as totalOut30d,
@@ -417,18 +429,22 @@ export async function getDashboardAlerts(branchSync?: string[]): Promise<Alert[]
           if(avgDailyOut > 0, totalQty / avgDailyOut, 999999) as daysOnHand
         FROM stock_transaction
         WHERE toDate(doc_datetime) <= toDate({today:String})
+          AND branch_sync != ''
           ${branchFilter.sql}
-        GROUP BY item_code
+        GROUP BY branch_sync, item_code
         HAVING totalQty > 0 AND avgDailyOut > 0 AND daysOnHand <= 7
       )
+      GROUP BY branch_sync
+      ORDER BY branch_sync
     `;
 
     // 2. Overstock Items
     // threshold = Days on Hand > 90 (อิงจากอัตราขายย้อนหลัง 30 วัน)
     const overstockQuery = `
-      SELECT count(*) as count
+      SELECT branch_sync, count(*) as count
       FROM (
         SELECT
+          branch_sync,
           item_code,
           sum(qty) as totalQty,
           abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate({today:String}) - INTERVAL 30 DAY)) as totalOut30d,
@@ -436,81 +452,136 @@ export async function getDashboardAlerts(branchSync?: string[]): Promise<Alert[]
           if(avgDailyOut > 0, totalQty / avgDailyOut, 999999) as daysOnHand
         FROM stock_transaction
         WHERE toDate(doc_datetime) <= toDate({today:String})
+          AND branch_sync != ''
           ${branchFilter.sql}
-        GROUP BY item_code
+        GROUP BY branch_sync, item_code
         HAVING totalQty > 0 AND daysOnHand > 90
       )
+      GROUP BY branch_sync
+      ORDER BY branch_sync
     `;
 
     // 3. Overdue Payments (AR)
     // นับเอกสารขายที่ค้างชำระเกินกำหนด
     const overdueQuery = `
-      SELECT count(*) as count, sum(outstanding) as amount
+      SELECT branch_sync, count(*) as count, sum(outstanding) as amount
       FROM (
         SELECT
+          branch_sync,
           doc_no,
           total_amount - sum_pay_money as outstanding
         FROM saleinvoice_transaction
         WHERE status_cancel != 'Cancel'
-          AND status_payment != 'Fully Paid'
+          AND branch_sync != ''
+          AND status_payment IN ('Outstanding', 'Partially Paid')
+          AND doc_type = 'CREDIT'
           AND due_date < today()
           AND (total_amount - sum_pay_money) > 0
+          ${dateRange ? 'AND doc_datetime BETWEEN {startDate:String} AND {endDate:String}' : ''}
           ${branchFilter.sql}
       )
+      GROUP BY branch_sync
+      ORDER BY branch_sync
     `;
 
     const queryParams = {
       today,
+      ...(dateRange ? { startDate: dateRange.start, endDate: dateRange.end } : {}),
       ...branchFilter.params
     };
 
-    const [lowStockRes, overstockRes, overdueRes] = await Promise.all([
+    const branchNameQuery = `
+      SELECT branch_sync, any(branch_sync_name) as branch_sync_name
+      FROM saleinvoice_transaction
+      WHERE branch_sync != ''
+      GROUP BY branch_sync
+    `;
+
+    const [lowStockRes, overstockRes, overdueRes, branchNameRes] = await Promise.all([
       clickhouse.query({ query: lowStockQuery, query_params: queryParams, format: 'JSONEachRow' }),
       clickhouse.query({ query: overstockQuery, query_params: queryParams, format: 'JSONEachRow' }),
       clickhouse.query({ query: overdueQuery, query_params: queryParams, format: 'JSONEachRow' }),
+      clickhouse.query({ query: branchNameQuery, format: 'JSONEachRow' }),
     ]);
 
-    const lowStockData = (await lowStockRes.json())[0] as Record<string, unknown> | undefined;
-    const overstockData = (await overstockRes.json())[0] as Record<string, unknown> | undefined;
-    const overdueData = (await overdueRes.json())[0] as Record<string, unknown> | undefined;
+    const lowStockRows = await lowStockRes.json() as Array<Record<string, unknown>>;
+    const overstockRows = await overstockRes.json() as Array<Record<string, unknown>>;
+    const overdueRows = await overdueRes.json() as Array<Record<string, unknown>>;
+    const branchNameRows = await branchNameRes.json() as Array<{ branch_sync: string; branch_sync_name: string }>;
 
-    const lowStockCount = Number(lowStockData?.count) || 0;
-    const overstockCount = Number(overstockData?.count) || 0;
-    const overdueCount = Number(overdueData?.count) || 0;
-    const overdueAmount = Number(overdueData?.amount) || 0;
+    const branchNameMap: Record<string, string> = {};
+    branchNameRows.forEach((row) => {
+      if (row.branch_sync) {
+        branchNameMap[row.branch_sync] = row.branch_sync_name || `กิจการ ${row.branch_sync}`;
+      }
+    });
 
-    if (lowStockCount > 0) {
+    const now = new Date().toISOString();
+
+    lowStockRows.forEach((row) => {
+      const branchSync = String(row.branch_sync || '');
+      const branchName = branchNameMap[branchSync] ?? `กิจการ ${branchSync}`;
+      const lowStockCount = Number(row.count) || 0;
+      if (!branchSync || lowStockCount <= 0) return;
+
       alerts.push({
-        id: 1,
+        id: getAlertId(1, branchSync),
         type: 'warning',
         title: 'สินค้าใกล้หมด',
-        message: `มีสินค้า ${lowStockCount} SKU ที่สต็อกคงเหลือใช้งานได้ ≤ 7 วัน`,
+        message: `${branchName} มีสินค้า ${lowStockCount} SKU ที่สต็อกคงเหลือใช้งานได้ ≤ 7 วัน`,
         severity: 'warning',
-        timestamp: new Date().toISOString(),
+        timestamp: now,
+        branchSync,
+        branchName,
+        category: 'lowStock',
+        count: lowStockCount,
+        actionLabel: `ดู ${lowStockCount} SKU`,
       });
-    }
+    });
 
-    if (overstockCount > 0) {
+    overstockRows.forEach((row) => {
+      const branchSync = String(row.branch_sync || '');
+      const branchName = branchNameMap[branchSync] ?? `กิจการ ${branchSync}`;
+      const overstockCount = Number(row.count) || 0;
+      if (!branchSync || overstockCount <= 0) return;
+
       alerts.push({
-        id: 2,
+        id: getAlertId(2, branchSync),
         type: 'info',
         title: 'สินค้าเกินคลัง',
-        message: `มีสินค้า ${overstockCount} SKU ที่คาดว่าจะขายได้นานกว่า > 90 วัน`,
+        message: `${branchName} มีสินค้า ${overstockCount} SKU ที่คาดว่าจะขายได้นานกว่า > 90 วัน`,
         severity: 'info',
-        timestamp: new Date().toISOString(),
+        timestamp: now,
+        branchSync,
+        branchName,
+        category: 'overstock',
+        count: overstockCount,
+        actionLabel: `ดู ${overstockCount} SKU`,
       });
-    }
+    });
 
-    if (overdueCount > 0) {
+    overdueRows.forEach((row) => {
+      const branchSync = String(row.branch_sync || '');
+      const branchName = branchNameMap[branchSync] ?? `กิจการ ${branchSync}`;
+      const overdueCount = Number(row.count) || 0;
+      const overdueAmount = Number(row.amount) || 0;
+      if (!branchSync || overdueCount <= 0) return;
+
       alerts.push({
-        id: 3,
+        id: getAlertId(3, branchSync),
         type: 'error',
         title: 'ลูกหนี้ค้างชำระ',
-        message: `มี ${overdueCount} บิลเกินกำหนดชำระ มูลค่า ฿${overdueAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        message: `${branchName} มี ${overdueCount} บิลเกินกำหนดชำระ มูลค่า ฿${overdueAmount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         severity: 'error',
-        timestamp: new Date().toISOString(),
+        timestamp: now,
+        branchSync,
+        branchName,
+        category: 'overdue',
+        count: overdueCount,
+        amount: overdueAmount,
+        actionLabel: `ดู ${overdueCount} บิล`,
       });
-    }
+    });
 
     return alerts;
   } catch (error) {
