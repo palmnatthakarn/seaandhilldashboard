@@ -47,7 +47,7 @@ export default function LoginPage() {
             <h1 className="max-w-[620px] text-5xl font-bold leading-[1.12] text-[hsl(var(--foreground))]">
               ข้อมูลธุรกิจ
               <br />
-              <span className="bg-gradient-to-r from-[hsl(v.oar(--primary))] to-[hsl(var(--chart-2))] bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-[hsl(var(--primary))] to-[hsl(var(--chart-2))] bg-clip-text text-transparent">
                 ในมือผู้บริหาร
               </span>
             </h1>
