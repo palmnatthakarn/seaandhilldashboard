@@ -14,14 +14,27 @@ import { ErrorBoundary, ErrorDisplay } from '@/components/ErrorBoundary';
 import { DollarSign, ShoppingCart, Users, Package } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useBranchStore } from '@/store/useBranchStore';
+import { formatSelectedBranchNames } from '@/store/useBranchStore';
 import { suggestComparisonType, getComparisonLabel } from '@/lib/comparison';
 import type { DashboardKPIs, SalesChartData, RevenueExpenseData, RecentSale, Alert } from '@/lib/data/dashboard';
+import { exportStyledReport } from '@/lib/exportExcel';
+import { exportStyledPdfReport, prewarmPdfFonts } from '@/lib/exportPdf';
 
 type DashboardData = DashboardKPIs & {
   recentSales: RecentSale[];
   alerts: Alert[];
   salesChart: SalesChartData[];
   revenueChart: RevenueExpenseData[];
+};
+
+type OverviewExportRow = {
+  section: string;
+  item: string;
+  detail: string;
+  period: string;
+  count: string;
+  amount: string;
+  change: string;
 };
 
 // Custom ECharts Theme
@@ -56,7 +69,12 @@ const theme = {
 export default function Dashboard() {
   const { dateRange, setDateRange } = useDateRangeStore();
   const selectedBranches = useBranchStore((s) => s.selectedBranches);
+  const availableBranches = useBranchStore((s) => s.availableBranches);
   const [showAll, setShowAll] = useState(false);
+
+  React.useEffect(() => {
+    void prewarmPdfFonts();
+  }, []);
 
   // helper: format growth value → "ไม่มีข้อมูล" ถ้าเป็น null
   const formatGrowthTrend = (growth: number | null | undefined): string | undefined => {
@@ -66,6 +84,130 @@ export default function Dashboard() {
   const formatGrowthDetail = (growth: number | null | undefined): string => {
     if (growth === null || growth === undefined) return 'ไม่มีข้อมูล';
     return `${growth > 0 ? '+' : ''}${growth.toFixed(1)}%`;
+  };
+  const formatExportNumber = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return '';
+    return value.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  };
+  const formatExportCurrency = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return '';
+    return `฿${value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const exportHeaders: Record<keyof OverviewExportRow, string> = {
+    section: 'หมวด',
+    item: 'รายการ',
+    detail: 'รายละเอียด',
+    period: 'วันที่/ช่วง',
+    count: 'จำนวน',
+    amount: 'มูลค่า',
+    change: 'เปลี่ยนแปลง',
+  };
+
+  const exportFilename = () => `overview-dashboard-${dateRange.start}-to-${dateRange.end}`;
+
+  const buildOverviewExportRows = (): OverviewExportRow[] => {
+    const kpiRows: OverviewExportRow[] = [
+      {
+        section: 'KPI',
+        item: 'ยอดขายรวม',
+        detail: comparisonLabel,
+        period: `${dateRange.start} ถึง ${dateRange.end}`,
+        count: '',
+        amount: formatExportCurrency(data?.totalSales ?? 0),
+        change: formatGrowthDetail(data?.salesGrowth),
+      },
+      {
+        section: 'KPI',
+        item: 'คำสั่งซื้อ',
+        detail: comparisonLabel,
+        period: `${dateRange.start} ถึง ${dateRange.end}`,
+        count: formatExportNumber(data?.totalOrders ?? 0),
+        amount: '',
+        change: formatGrowthDetail(data?.ordersGrowth),
+      },
+      {
+        section: 'KPI',
+        item: 'ลูกค้า',
+        detail: comparisonLabel,
+        period: `${dateRange.start} ถึง ${dateRange.end}`,
+        count: formatExportNumber(data?.totalCustomers ?? 0),
+        amount: '',
+        change: formatGrowthDetail(data?.customersGrowth),
+      },
+      {
+        section: 'KPI',
+        item: 'มูลค่าเฉลี่ยต่อคำสั่งซื้อ',
+        detail: 'ต่อคำสั่งซื้อ',
+        period: `${dateRange.start} ถึง ${dateRange.end}`,
+        count: '',
+        amount: formatExportCurrency(Math.round(data?.avgOrderValue ?? 0)),
+        change: formatGrowthDetail(data?.avgOrderGrowth),
+      },
+    ];
+
+    const salesTrendRows = (data?.salesChart ?? []).map((item): OverviewExportRow => ({
+      section: 'แนวโน้มยอดขาย',
+      item: 'ยอดขายรายวัน',
+      detail: `${item.orders.toLocaleString('th-TH')} คำสั่งซื้อ`,
+      period: item.date,
+      count: formatExportNumber(item.orders),
+      amount: formatExportCurrency(item.amount),
+      change: '',
+    }));
+
+    const revenueRows = (data?.revenueChart ?? []).map((item): OverviewExportRow => ({
+      section: 'รายได้ vs ค่าใช้จ่าย',
+      item: item.month,
+      detail: `รายได้ ${item.revenue.toLocaleString('th-TH')} / ค่าใช้จ่าย ${item.expense.toLocaleString('th-TH')}`,
+      period: item.month,
+      count: '',
+      amount: formatExportCurrency(item.profit),
+      change: '',
+    }));
+
+    const recentSaleRows = (showAll ? (allSalesData ?? data?.recentSales ?? []) : (data?.recentSales ?? [])).map((sale): OverviewExportRow => ({
+      section: 'รายการขายล่าสุด',
+      item: sale.customerName || 'ไม่ระบุ',
+      detail: `${sale.docNo}${sale.branchName ? ` • ${sale.branchName}` : ''}`,
+      period: sale.docDate,
+      count: '',
+      amount: formatExportCurrency(sale.totalAmount),
+      change: sale.statusPayment || '',
+    }));
+
+    const alertRows = (data?.alerts ?? []).map((alert): OverviewExportRow => ({
+      section: 'Notifications',
+      item: alert.title,
+      detail: `${alert.message}${alert.branchName ? ` • ${alert.branchName}` : ''}`,
+      period: alert.timestamp || '',
+      count: alert.count !== undefined ? formatExportNumber(alert.count) : '',
+      amount: alert.amount !== undefined ? formatExportCurrency(alert.amount) : '',
+      change: alert.type,
+    }));
+
+    return [...kpiRows, ...salesTrendRows, ...revenueRows, ...recentSaleRows, ...alertRows];
+  };
+
+  const handleDownloadExcel = async () => {
+    await exportStyledReport({
+      data: buildOverviewExportRows(),
+      headers: exportHeaders,
+      filename: exportFilename(),
+      sheetName: 'Overview',
+      title: 'รายงานภาพรวมธุรกิจ',
+      subtitle: `กิจการ : ${formatSelectedBranchNames(selectedBranches, availableBranches)} | ช่วงวันที่ : ${dateRange.start} ถึง ${dateRange.end}`,
+    });
+  };
+
+  const handleDownloadPdf = async () => {
+    await exportStyledPdfReport({
+      data: buildOverviewExportRows(),
+      headers: exportHeaders,
+      filename: exportFilename(),
+      title: 'รายงานภาพรวมธุรกิจ',
+      subtitle: `กิจการ : ${formatSelectedBranchNames(selectedBranches, availableBranches)} | ช่วงวันที่ : ${dateRange.start} ถึง ${dateRange.end}`,
+    });
   };
 
   // description ที่ dynamic ตามช่วงวันที่ที่เลือก
@@ -243,7 +385,10 @@ export default function Dashboard() {
             onChange={setDateRange}
             defaultKey="TODAY"
           />
-          <DownloadReportButton />
+          <DownloadReportButton
+            onDownloadExcel={() => void handleDownloadExcel()}
+            onDownloadPdf={() => void handleDownloadPdf()}
+          />
         </div>
       </motion.div>
 

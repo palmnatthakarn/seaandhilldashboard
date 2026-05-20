@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAccountProducts, getAccountPurchaseItems, getAccountType } from '@/lib/data/accounting';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 
 export async function GET(
@@ -50,6 +50,6 @@ export async function GET(
     return NextResponse.json({ success: true, data });
   } catch (error) {
     logError(error, 'GET /api/reports/accounting/[accountCode]');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTopCustomers } from '@/lib/data/sales';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,6 +38,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logError(error, 'GET /api/sales/top-customers');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

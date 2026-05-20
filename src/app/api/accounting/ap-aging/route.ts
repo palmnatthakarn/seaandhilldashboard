@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAPAgingData } from '@/lib/data/accounting';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 
 export async function GET(request: Request) {
@@ -40,6 +40,6 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     logError(error, 'GET /api/accounting/ap-aging');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

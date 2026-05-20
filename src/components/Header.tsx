@@ -1,14 +1,13 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { Search, BarChart3, LayoutDashboard, Menu } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { formatDateTime } from '@/lib/utils';
+import { BarChart3, LayoutDashboard, Menu } from 'lucide-react';
 import { BranchSwitcher } from './layout/BranchSwitcher';
 import { cn } from '@/lib/utils';
 import { useComparison } from '@/lib/ComparisonContext';
 import { useSidebar } from '@/lib/SidebarContext';
 import { NotificationPanel } from './NotificationPanel';
+import { SmartSearch } from './SmartSearch';
 
 const pageNames: Record<string, string> = {
     '/': 'ภาพรวมธุรกิจ',
@@ -50,17 +49,8 @@ const mainRouteFromComparison: Record<string, string> = {
 export function Header() {
     const pathname = usePathname();
     const router = useRouter();
-    const [currentTime, setCurrentTime] = useState(new Date());
     const { isComparisonMode, setComparisonMode, toggleComparisonMode } = useComparison();
     const { openMobileSidebar, isCollapsed } = useSidebar();
-
-    useEffect(() => {
-        const timer = setInterval(() => {
-            setCurrentTime(new Date());
-        }, 1000);
-
-        return () => clearInterval(timer);
-    }, []);
 
     const pageName = pageNames[pathname] || 'Dashboard';
 
@@ -119,15 +109,7 @@ export function Header() {
                 {/* Branch Switcher */}
                 <BranchSwitcher />
 
-                {/* Search — hidden on mobile */}
-                <div className="relative hidden md:block">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[hsl(var(--muted-foreground))]" />
-                    <input
-                        type="text"
-                        placeholder="ค้นหา..."
-                        className="h-9 w-48 lg:w-64 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] transition-all"
-                    />
-                </div>
+                <SmartSearch />
 
                 {/* Comparison Toggle Button — icon only on mobile */}
                 <button

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { clickhouse } from '@/lib/clickhouse';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 
 function buildBranchFilterSql(branches?: string[]): string {
@@ -135,6 +135,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, data });
   } catch (error) {
     logError(error, 'GET /api/reports/accounting/all-details');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

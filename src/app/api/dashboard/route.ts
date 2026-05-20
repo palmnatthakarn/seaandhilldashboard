@@ -6,13 +6,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDashboardKPIs, getRecentSales, getDashboardAlerts } from '@/lib/data/dashboard';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 import { getAuthorizedBranches } from '@/lib/api-branch-auth';
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const branches = searchParams.getAll('branch');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const salesLimit = parseInt(searchParams.get('salesLimit') || '10', 10);
@@ -45,6 +44,6 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('API Error:', error); // Debug log
     logError(error, 'GET /api/dashboard');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

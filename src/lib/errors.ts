@@ -63,6 +63,10 @@ export function formatErrorResponse(error: unknown) {
   };
 }
 
+export function getErrorStatusCode(error: unknown) {
+  return isAPIError(error) ? error.statusCode : 500;
+}
+
 /**
  * Logs error with context
  */

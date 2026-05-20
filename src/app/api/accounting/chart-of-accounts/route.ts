@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getChartOfAccountsList } from '@/lib/data/accounting';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 
 export async function GET(request: Request) {
@@ -36,6 +36,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, data });
   } catch (error) {
     logError(error, 'GET /api/accounting/chart-of-accounts');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

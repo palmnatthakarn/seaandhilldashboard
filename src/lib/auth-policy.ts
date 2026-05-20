@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { authDbClient, ensureAuthUserPolicyColumns } from "@/lib/auth-db";
+import { ErrorTypes } from "@/lib/errors";
 
 export type AppRole = "admin" | "user";
 
@@ -201,16 +202,20 @@ export async function requireAdminUser() {
 export async function getCurrentBranchPolicy() {
   const user = await getCurrentSessionUser();
   if (!user) {
-    return { user: null, isAdmin: false, branches: [] as string[] };
+    return { user: null, isAdmin: false, isAllowed: false, branches: [] as string[] };
   }
 
   if (isAdminUser(user)) {
-    return { user, isAdmin: true, branches: ["*"] };
+    return { user, isAdmin: true, isAllowed: true, branches: ["*"] };
+  }
+
+  if (!await isEmailAllowed(user.email)) {
+    return { user, isAdmin: false, isAllowed: false, branches: [] as string[] };
   }
 
   const persistedUser = await findManagedUserByEmail(user.email);
   const branches = normalizeBranches(parseBranches(persistedUser?.allowed_branches ?? (user as { allowed_branches?: unknown }).allowed_branches));
-  return { user, isAdmin: false, branches };
+  return { user, isAdmin: false, isAllowed: true, branches };
 }
 
 export async function filterBranchesForCurrentUser(requestedBranches: string[]) {
@@ -218,7 +223,11 @@ export async function filterBranchesForCurrentUser(requestedBranches: string[]) 
   const requested = normalizeBranches(requestedBranches.length > 0 ? requestedBranches : ["ALL"]);
 
   if (!policy.user) {
-    throw new Error("Unauthorized");
+    throw ErrorTypes.UNAUTHORIZED("Authentication required");
+  }
+
+  if (!policy.isAllowed) {
+    throw ErrorTypes.FORBIDDEN("Dashboard access has not been granted");
   }
 
   if (policy.isAdmin || policy.branches.includes("*")) {

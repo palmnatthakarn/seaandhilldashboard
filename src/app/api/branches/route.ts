@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import { clickhouse } from '@/lib/clickhouse';
 import { getCurrentBranchPolicy } from '@/lib/auth-policy';
+import { ErrorTypes, formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 
 export async function GET() {
     try {
         const branchPolicy = await getCurrentBranchPolicy();
+        if (!branchPolicy.user) {
+            throw ErrorTypes.UNAUTHORIZED('Authentication required');
+        }
+        if (!branchPolicy.isAllowed) {
+            throw ErrorTypes.FORBIDDEN('Dashboard access has not been granted');
+        }
+
         const query = `
             SELECT branch_sync, any(branch_sync_name) as branch_sync_name
             FROM saleinvoice_transaction
@@ -36,10 +44,7 @@ export async function GET() {
 
         return NextResponse.json(branches);
     } catch (error) {
-        console.error('Failed to fetch branches:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch branches from ClickHouse' },
-            { status: 500 }
-        );
+        logError(error, 'GET /api/branches');
+        return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
     }
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPurchaseTrendData } from '@/lib/data/purchase';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
-import { formatErrorResponse, logError } from '@/lib/errors';
+import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -37,6 +37,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logError(error, 'GET /api/purchase/trend');
-    return NextResponse.json(formatErrorResponse(error), { status: 500 });
+    return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

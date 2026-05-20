@@ -1,7 +1,7 @@
 'use client';
 
 import { MessageCircle, X, Send, Loader2, Database } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
 
 interface Message {
@@ -23,7 +23,7 @@ export default function ChatWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = async (text: string) => {
+  const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
     const userMessage: Message = {
@@ -94,7 +94,21 @@ export default function ChatWidget() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [messages]);
+
+  useEffect(() => {
+    const handleAskAi = (event: Event) => {
+      const customEvent = event as CustomEvent<{ prompt?: string }>;
+      const prompt = customEvent.detail?.prompt?.trim();
+      if (!prompt) return;
+
+      setIsOpen(true);
+      void sendMessage(prompt);
+    };
+
+    window.addEventListener('seaandhill:ask-ai', handleAskAi);
+    return () => window.removeEventListener('seaandhill:ask-ai', handleAskAi);
+  }, [sendMessage]);
 
   return (
     <>

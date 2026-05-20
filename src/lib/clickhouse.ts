@@ -10,6 +10,7 @@
 
 import { getDatabase, DatabaseType } from './db/index';
 import { getCurrentBranchPolicy } from './auth-policy';
+import { ErrorTypes } from './errors';
 
 type QueryOptions = {
   query: string;
@@ -90,6 +91,15 @@ async function applyBranchPolicyToQueryOptions(options: unknown) {
 
   const queryOptions = options as QueryOptions;
   const policy = await getCurrentBranchPolicy();
+
+  if (!policy.user) {
+    throw ErrorTypes.UNAUTHORIZED("Authentication required");
+  }
+
+  if (!policy.isAllowed) {
+    throw ErrorTypes.FORBIDDEN("Dashboard access has not been granted");
+  }
+
   if (policy.isAdmin || policy.branches.includes('*')) {
     return queryOptions;
   }
@@ -149,7 +159,11 @@ export async function queryWithBranchAuth(baseQuery: string, params: Record<stri
   const policy = await getCurrentBranchPolicy();
 
   if (!policy.user) {
-    throw new Error("Unauthorized: No session found");
+    throw ErrorTypes.UNAUTHORIZED("Authentication required");
+  }
+
+  if (!policy.isAllowed) {
+    throw ErrorTypes.FORBIDDEN("Dashboard access has not been granted");
   }
 
   // Admin or user with '*' branch has access to everything
