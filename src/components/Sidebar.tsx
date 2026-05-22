@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -73,6 +73,10 @@ const itemVariants = {
     visible: { opacity: 1, x: 0, transition: { type: 'spring' as const, bounce: 0, duration: 0.4 } }
 };
 
+const subscribeToClientSnapshot = () => () => {};
+const getClientSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 function getInitials(name: string, email: string) {
     const source = name.trim() || email.split('@')[0] || 'User';
     const words = source.split(/\s+/).filter(Boolean);
@@ -87,8 +91,11 @@ function getInitials(name: string, email: string) {
 export function Sidebar() {
     const { data: session } = useSession();
     const user = session?.user;
-    const displayEmail = user?.email ?? '';
-    const displayName = user?.name || displayEmail.split('@')[0] || 'User';
+    const hasMounted = useSyncExternalStore(subscribeToClientSnapshot, getClientSnapshot, getServerSnapshot);
+    const userEmail = user?.email ?? '';
+    const userName = user?.name || userEmail.split('@')[0] || 'User';
+    const displayEmail = hasMounted ? userEmail : '';
+    const displayName = hasMounted ? userName : 'User';
     const displayInitials = getInitials(displayName, displayEmail);
     const pathname = usePathname();
     const router = useRouter();

@@ -223,7 +223,7 @@ export function ProfitLossDetailTable({
   const SectionHeader = ({ label }: { label: string }) => (
     <tr className="border-b border-border bg-muted/10">
       <td
-        className={`${stickyLabelBase} px-4 py-2 font-semibold text-foreground text-xs uppercase tracking-wider`}
+        className={`${stickyLabelBase} px-4 py-2 text-sm font-semibold text-foreground`}
       >
         {label}
       </td>
@@ -248,7 +248,7 @@ export function ProfitLossDetailTable({
       <tr className="border-b border-border/40 hover:bg-muted/20 transition-colors">
         <td className={labelCls}>
           <span className="text-foreground">{acc.accountName}</span>
-          <span className="block text-xs text-muted-foreground font-mono">{acc.accountCode}</span>
+          <span className="block text-sm text-muted-foreground font-mono">{acc.accountCode}</span>
         </td>
         {displayPeriods.map((p, i) => {
           const isFirstB = viewMode === 'comparison' && i === periodsA.length;
@@ -288,28 +288,28 @@ export function ProfitLossDetailTable({
 
     return (
       <tr className={`bg-muted/7 ${doubleBorder ? 'border-b-1' : 'border-b'} border-border`}>
-        <td className={`${stickyLabelBase} px-6 py-2 text-xs font-bold text-foreground`}>
+        <td className={`${stickyLabelBase} px-6 py-2 text-sm font-bold text-foreground`}>
           {label}
         </td>
         {displayPeriods.map((p, i) => {
           const isFirstB = viewMode === 'comparison' && i === periodsA.length;
           const borderCls = isFirstB ? 'border-l border-border/40' : '';
           return (
-            <td key={`${p}-${i}`} className={`${cellCls} text-xs py-2 font-bold ${borderCls}`}>
+            <td key={`${p}-${i}`} className={`${cellCls} py-2 font-bold ${borderCls}`}>
               {fmt(values(p))}
             </td>
           );
         })}
         {viewMode === 'normal' ? (
-          <td className={`${cellCls} text-xs py-2 font-bold`}>
+          <td className={`${cellCls} py-2 font-bold`}>
             {fmt(grand)}
           </td>
         ) : (
           <>
-            <td className={`${cellCls} text-xs py-2 font-bold border-l border-border/40`}>
+            <td className={`${cellCls} py-2 font-bold border-l border-border/40`}>
               {fmt(rowTotal)}
             </td>
-            <td className={`${cellCls} text-xs py-2 font-bold border-l border-border/40 ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : ''}`}>
+            <td className={`${cellCls} py-2 font-bold border-l border-border/40 ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : ''}`}>
               {diff > 0 ? '+' : ''}{fmt(diff)}
             </td>
           </>
@@ -342,15 +342,15 @@ export function ProfitLossDetailTable({
           );
         })}
         {viewMode === 'normal' ? (
-          <td className={`${cellCls} py-3 font-bold text-base ${grand < 0 ? 'text-destructive' : ''}`}>
+          <td className={`${cellCls} py-3 font-bold ${grand < 0 ? 'text-destructive' : ''}`}>
             {formatCurrency(grand)}
           </td>
         ) : (
           <>
-            <td className={`${cellCls} py-3 font-bold text-base border-l border-border/40 ${rowTotal < 0 ? 'text-destructive' : ''}`}>
+            <td className={`${cellCls} py-3 font-bold border-l border-border/40 ${rowTotal < 0 ? 'text-destructive' : ''}`}>
               {formatCurrency(rowTotal)}
             </td>
-            <td className={`${cellCls} py-3 font-bold text-base border-l border-border/40 ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : ''}`}>
+            <td className={`${cellCls} py-3 font-bold border-l border-border/40 ${diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : ''}`}>
               {diff > 0 ? '+' : ''}{formatCurrency(diff)}
             </td>
           </>
@@ -385,7 +385,7 @@ export function ProfitLossDetailTable({
     <tr className="border-b border-border/40 hover:bg-muted/20 transition-colors">
       <td className={labelCls}>
         <span className="text-foreground">{account.accountName}</span>
-        <span className="block text-xs text-muted-foreground font-mono">{account.accountCode}</span>
+        <span className="block text-sm text-muted-foreground font-mono">{account.accountCode}</span>
       </td>
       {comparisonBranches.map((branch) =>
         displayPeriods.map((period, index) => (
@@ -407,7 +407,7 @@ export function ProfitLossDetailTable({
     strong?: boolean;
   }) => (
     <tr className={`${strong ? 'border-t border-border font-bold' : 'border-b border-border bg-muted/5 font-bold'}`}>
-      <td className={`${stickyLabelBase} ${strong ? 'px-4 py-3 text-sm' : 'px-6 py-2 text-xs'}`}>
+      <td className={`${stickyLabelBase} ${strong ? 'px-4 py-3' : 'px-6 py-2'} text-sm`}>
         {label}
       </td>
       {comparisonBranches.map((branch) =>
@@ -416,14 +416,14 @@ export function ProfitLossDetailTable({
           return (
             <td
               key={`${branch.key}-${label}-${period}-${index}`}
-              className={`${cellCls} ${strong ? 'py-3' : 'text-xs py-2 font-bold'} ${index === 0 ? 'border-l border-border/40' : ''} ${value < 0 ? 'text-destructive' : ''}`}
+              className={`${cellCls} ${strong ? 'py-3' : 'py-2 font-bold'} ${index === 0 ? 'border-l border-border/40' : ''} ${value < 0 ? 'text-destructive' : ''}`}
             >
               {fmt(value)}
             </td>
           );
         })
       )}
-      {renderBranchSummaryCells(values, strong ? 'py-3 text-base font-bold' : 'text-xs py-2 font-bold')}
+      {renderBranchSummaryCells(values, strong ? 'py-3 font-bold' : 'py-2 font-bold')}
     </tr>
   );
 
@@ -433,7 +433,7 @@ export function ProfitLossDetailTable({
         {/* ── Header ── */}
         <thead>
           {showBranchComparison && (
-            <tr className="border-b border-border text-xs text-muted-foreground bg-muted/10">
+            <tr className="border-b border-border text-sm text-muted-foreground bg-muted/10">
               <th className={`${labelCls} text-center font-medium py-2`}></th>
               {comparisonBranches.map((branch) => (
                 <th key={branch.key} colSpan={displayPeriods.length} className="text-center font-semibold py-2 border-l border-border/40">
@@ -444,7 +444,7 @@ export function ProfitLossDetailTable({
             </tr>
           )}
           {viewMode === 'comparison' && !showBranchComparison && (
-            <tr className="border-b border-border text-xs text-muted-foreground bg-muted/10">
+            <tr className="border-b border-border text-sm text-muted-foreground bg-muted/10">
               <th className={`${labelCls} text-center font-medium py-2`}></th>
               {periodsA.length > 0 && (
                 <th colSpan={periodsA.length} className="text-center font-semibold py-2">
@@ -459,7 +459,7 @@ export function ProfitLossDetailTable({
               <th colSpan={2} className="border-l border-border"></th>
             </tr>
           )}
-          <tr className="border-b border-border text-xs text-muted-foreground">
+          <tr className="border-b border-border text-sm text-muted-foreground">
             <th className={`${labelCls} text-center font-medium py-3`}>รายการ</th>
             {showBranchComparison
               ? comparisonBranches.map((branch) =>
