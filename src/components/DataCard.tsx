@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { ExternalLink, MoreVertical, Database, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { ExternalLink, MoreVertical, Database, Download, FileSpreadsheet, FileText, Loader2, X } from 'lucide-react';
 import { useAdminStatus } from '@/hooks/useAdminStatus';
 
 interface QueryInfo {
@@ -23,7 +23,33 @@ interface DataCardProps {
     id?: string; // ID for scroll target
     headerExtra?: React.ReactNode; // Extra content in header (e.g., filters)
     onExportExcel?: () => void; // Export to Excel callback
-    onExportPDF?: () => void; // Export to PDF callback
+    onExportPDF?: () => void | Promise<void | PdfExportResult>; // Export to PDF callback
+}
+
+type PdfExportResult = {
+    blob: Blob;
+    filename: string;
+};
+
+type PdfPreviewState = PdfExportResult & {
+    url: string;
+};
+
+declare global {
+    interface Window {
+        __PDF_EXPORT_PREVIEW_ONLY__?: boolean;
+    }
+}
+
+function isPdfExportResult(value: unknown): value is PdfExportResult {
+    return (
+        typeof value === 'object' &&
+        value !== null &&
+        'blob' in value &&
+        'filename' in value &&
+        (value as PdfExportResult).blob instanceof Blob &&
+        typeof (value as PdfExportResult).filename === 'string'
+    );
 }
 
 // Query Modal component
@@ -164,6 +190,7 @@ export function DataCard({ title, children, className, action, description, quer
     const [showMenu, setShowMenu] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [pdfPreview, setPdfPreview] = useState<PdfPreviewState | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const exportMenuRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
@@ -220,6 +247,81 @@ export function DataCard({ title, children, className, action, description, quer
         e.preventDefault();
         e.stopPropagation();
         setShowExportMenu(!showExportMenu);
+    };
+
+    useEffect(() => {
+        if (!pdfPreview) return;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [pdfPreview]);
+
+    useEffect(() => {
+        return () => {
+            if (pdfPreview?.url) {
+                URL.revokeObjectURL(pdfPreview.url);
+            }
+        };
+    }, [pdfPreview]);
+
+    const closePdfPreview = () => {
+        setPdfPreview((current) => {
+            if (current?.url) {
+                URL.revokeObjectURL(current.url);
+            }
+            return null;
+        });
+    };
+
+    const downloadPreviewPdf = () => {
+        if (!pdfPreview) return;
+        const link = document.createElement('a');
+        link.href = pdfPreview.url;
+        link.download = pdfPreview.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    };
+
+    const openPreviewPdf = () => {
+        if (pdfPreview) {
+            window.open(pdfPreview.url, '_blank', 'noopener,noreferrer');
+        }
+    };
+
+    const handlePdfExport = async () => {
+        if (!onExportPDF) return;
+        setShowExportMenu(false);
+        setIsExporting(true);
+
+        // Give UI thread time to render the loading spinner
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const previousPreviewOnly = window.__PDF_EXPORT_PREVIEW_ONLY__;
+        window.__PDF_EXPORT_PREVIEW_ONLY__ = true;
+
+        try {
+            const result = await Promise.resolve(onExportPDF());
+            if (isPdfExportResult(result)) {
+                setPdfPreview((current) => {
+                    if (current?.url) {
+                        URL.revokeObjectURL(current.url);
+                    }
+                    return {
+                        ...result,
+                        url: URL.createObjectURL(result.blob),
+                    };
+                });
+            }
+        } finally {
+            if (previousPreviewOnly === undefined) {
+                delete window.__PDF_EXPORT_PREVIEW_ONLY__;
+            } else {
+                window.__PDF_EXPORT_PREVIEW_ONLY__ = previousPreviewOnly;
+            }
+            setIsExporting(false);
+        }
     };
 
     const hasExportActions = Boolean(onExportExcel || onExportPDF);
@@ -308,17 +410,7 @@ export function DataCard({ title, children, className, action, description, quer
                                                 onClick={async (e) => {
                                                     e.preventDefault();
                                                     e.stopPropagation();
-                                                    setShowExportMenu(false);
-                                                    setIsExporting(true);
-                                                    
-                                                    // Give UI thread time to render the loading spinner
-                                                    await new Promise(resolve => setTimeout(resolve, 100));
-                                                    
-                                                    try {
-                                                        await Promise.resolve(onExportPDF());
-                                                    } finally {
-                                                        setIsExporting(false);
-                                                    }
+                                                    await handlePdfExport();
                                                 }}
                                             >
                                                 {isExporting ? (
@@ -385,6 +477,59 @@ export function DataCard({ title, children, className, action, description, quer
                     title={title}
                     queryInfo={queryInfo}
                 />
+            )}
+
+            {pdfPreview && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[9999]">
+                    <div
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                        onClick={closePdfPreview}
+                    />
+                    <div className="fixed inset-3 sm:inset-6 lg:inset-10 flex flex-col overflow-hidden rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--popover))] shadow-2xl">
+                        <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--border))] px-3 py-2 sm:px-4">
+                            <div className="min-w-0">
+                                <h3 className="truncate text-sm font-semibold text-[hsl(var(--foreground))]">
+                                    Preview PDF
+                                </h3>
+                                <p className="truncate text-xs text-muted-foreground">
+                                    {pdfPreview.filename}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <button
+                                    type="button"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-[hsl(var(--muted))] transition-colors"
+                                    onClick={openPreviewPdf}
+                                    title="เปิดในแท็บใหม่"
+                                >
+                                    <ExternalLink className="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md text-green-600 hover:bg-[hsl(var(--muted))] transition-colors"
+                                    onClick={downloadPreviewPdf}
+                                    title="ดาวน์โหลด PDF"
+                                >
+                                    <Download className="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-[hsl(var(--muted))] transition-colors"
+                                    onClick={closePdfPreview}
+                                    title="ปิด"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                        <iframe
+                            title={`PDF preview - ${title}`}
+                            src={pdfPreview.url}
+                            className="h-full w-full flex-1 bg-white"
+                        />
+                    </div>
+                </div>,
+                document.body
             )}
         </>
     );

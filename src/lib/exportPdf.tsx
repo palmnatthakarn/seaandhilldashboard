@@ -230,6 +230,17 @@ type PdfColumnGroup = {
   span: number;
 };
 
+export type PdfExportResult = {
+  blob: Blob;
+  filename: string;
+};
+
+declare global {
+  interface Window {
+    __PDF_EXPORT_PREVIEW_ONLY__?: boolean;
+  }
+}
+
 function guardPdfText(value: string): string {
   if (!value || value === '-') return value;
   return `${value}\u00A0`;
@@ -444,7 +455,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
   percentColumns?: string[];
   summaryConfig?: ExcelSummaryConfig;
   columnGroups?: PdfColumnGroup[];
-}): Promise<void> {
+}): Promise<PdfExportResult | void> {
   const {
     data,
     headers,
@@ -711,5 +722,11 @@ export async function exportStyledPdfReport<T extends object>(options: {
   );
 
   const blob = await pdf(doc).toBlob();
-  saveAs(blob, `${filename}.pdf`);
+  const result = { blob, filename: `${filename}.pdf` };
+
+  if (typeof window === 'undefined' || !window.__PDF_EXPORT_PREVIEW_ONLY__) {
+    saveAs(blob, result.filename);
+  }
+
+  return result;
 }
