@@ -2,6 +2,7 @@
 
 import { HorizontalBarChart, type HorizontalBarItem } from '@/components/charts/HorizontalBarChart';
 import type { TopCustomer } from '@/lib/data/types';
+import { fmtFull } from '@/lib/formatters';
 
 interface TopCustomersTableProps {
   data: TopCustomer[];
@@ -9,13 +10,6 @@ interface TopCustomersTableProps {
 }
 
 export function TopCustomersTable({ data, height = '400px' }: TopCustomersTableProps) {
-  const formatFullCurrency = (value: number) => {
-    return value.toLocaleString('th-TH', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  };
-
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('th-TH', {
@@ -60,10 +54,10 @@ export function TopCustomersTable({ data, height = '400px' }: TopCustomersTableP
         <div style="font-weight: 600; margin-bottom: 6px;">อันดับ ${item.rank}: ${item.name}</div>
         <div style="color: #666; font-size: 12px; margin-bottom: 4px;">รหัส: ${item.subLabel}</div>
         <div style="margin-top: 8px;">
-          <div>ยอดซื้อสะสม: <b style="color: #3b82f6;">฿${formatFullCurrency(item.value)}</b></div>
+          <div>ยอดซื้อสะสม: <b style="color: #3b82f6;">${fmtFull(item.value)}</b></div>
           <div>สัดส่วน: <b>${percentage}%</b> ของ Top 10</div>
           <div>จำนวนออเดอร์: <b>${extra.orderCount || 0}</b> ครั้ง</div>
-          <div>เฉลี่ย/ออเดอร์: <b>฿${formatFullCurrency(extra.avgOrderValue || 0)}</b></div>
+          <div>เฉลี่ย/ออเดอร์: <b>${fmtFull(extra.avgOrderValue || 0)}</b></div>
           <div>ซื้อล่าสุด: <b>${formatDate(extra.lastOrderDate || '')}</b> (${extra.daysSinceLastOrder} วัน)</div>
           <div>สถานะ: <b style="color: ${recency.color};">${recency.text}</b></div>
         </div>

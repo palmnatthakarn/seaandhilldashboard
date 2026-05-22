@@ -318,7 +318,7 @@ export default function InventoryPage() {
       </motion.div>
 
       {/* Inventory Turnover & Stock by Branch */}
-      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
         <ErrorBoundary>
           <DataCard
             className="h-full"

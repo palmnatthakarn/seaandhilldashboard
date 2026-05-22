@@ -386,7 +386,7 @@ export function SmartSearch() {
         onFocus={() => setIsOpen(true)}
         onKeyDown={handleKeyDown}
         placeholder="ค้นหา..."
-        className="h-9 w-48 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] lg:w-64"
+        className="h-9 w-48 md:w-52 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--background))] pl-9 pr-4 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] lg:w-64"
         role="combobox"
         aria-label="ค้นหาข้อมูลใน Dashboard"
         aria-expanded={isOpen}

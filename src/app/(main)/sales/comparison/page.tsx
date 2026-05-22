@@ -6,25 +6,16 @@ import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
 import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { SimpleKPICard, KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { KPIGrid } from '@/components/comparison/SimpleKPICard';
 import {
-  DollarSign, TrendingUp, TrendingDown, ShoppingCart, Package, BarChart3,
+  DollarSign, TrendingUp, TrendingDown, ShoppingCart, Package, BarChart3, AlertCircle,
   Users, Award, Trophy, Medal, Building2, Percent, Layers, UserCheck,
-  ArrowUpRight, ArrowDownRight, Minus, Receipt, CreditCard,
+  Receipt, CreditCard,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
+import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
-import type { DateRange, SalesKPIs, TopProduct, SalesBySalesperson, TopCustomer, ARStatus, SalesTrendData } from '@/lib/data/types';
+import type { SalesKPIs, TopProduct, SalesBySalesperson, TopCustomer, ARStatus, SalesTrendData } from '@/lib/data/types';
 
-/* ─── Branch color palette ─── */
-const BRANCH_PALETTE = [
-  { gradient: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-50', text: 'text-indigo-700', hex: '#6366f1', light: 'bg-indigo-500' },
-  { gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700', hex: '#10b981', light: 'bg-emerald-500' },
-  { gradient: 'from-amber-500 to-amber-600', bg: 'bg-amber-50', text: 'text-amber-700', hex: '#f59e0b', light: 'bg-amber-500' },
-  { gradient: 'from-rose-500 to-rose-600', bg: 'bg-rose-50', text: 'text-rose-700', hex: '#ef4444', light: 'bg-rose-500' },
-  { gradient: 'from-cyan-500 to-cyan-600', bg: 'bg-cyan-50', text: 'text-cyan-700', hex: '#06b6d4', light: 'bg-cyan-500' },
-  { gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700', hex: '#8b5cf6', light: 'bg-violet-500' },
-];
 
 /* ─── Full branch data interface ─── */
 interface BranchSalesData {
@@ -38,48 +29,6 @@ interface BranchSalesData {
   trendData: SalesTrendData[];
 }
 
-/* ═══════════════════════════════════════════════
-   Helper sub-components
-   ═══════════════════════════════════════════════ */
-
-function GrowthBadge({ value }: { value?: number }) {
-  if (value === undefined || value === null) return null;
-  const isUp = value > 0;
-  const isDown = value < 0;
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-md',
-      isUp && 'bg-emerald-50 text-emerald-600',
-      isDown && 'bg-rose-50 text-rose-600',
-      !isUp && !isDown && 'bg-muted text-muted-foreground',
-    )}>
-      {isUp ? <ArrowUpRight className="w-3 h-3" /> : isDown ? <ArrowDownRight className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
-      {Math.abs(value).toFixed(1)}%
-    </span>
-  );
-}
-
-function SectionHeader({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="px-6 pt-5 pb-3">
-      <h2 className="text-base font-bold text-foreground flex items-center gap-2">{icon}{title}</h2>
-      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-    </div>
-  );
-}
-
-function BranchDot({ idx }: { idx: number }) {
-  return <div className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', BRANCH_PALETTE[idx % BRANCH_PALETTE.length].light)} />;
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <div className="flex items-center gap-1.5 text-xs">
-      <div className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-      <span className="text-muted-foreground truncate max-w-[120px]">{label}</span>
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════════════
    Main Page
@@ -89,6 +38,7 @@ export default function SalesComparisonPage() {
   const { selectedBranches, availableBranches, isLoaded } = useComparison();
   const { dateRange, setDateRange } = useDateRangeStore();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BranchSalesData[]>([]);
 
   // Stable key to prevent infinite re-fetch from array reference changes
@@ -97,97 +47,66 @@ export default function SalesComparisonPage() {
   const fetchData = useCallback(async () => {
     if (!isLoaded || selectedBranches.length === 0) return;
     setLoading(true);
+    setError(null);
     try {
       const branchKeys = selectedBranches.filter((k: string) => k !== 'ALL');
 
-      // Fetch branches sequentially to avoid overwhelming the server
-      const results: BranchSalesData[] = [];
-      for (const branchKey of branchKeys) {
-        const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+      const results = await Promise.all(
+        branchKeys.map(async (branchKey): Promise<BranchSalesData> => {
+          const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+          const params = new URLSearchParams({ start_date: dateRange.start, end_date: dateRange.end });
+          params.append('branch', branchKey);
 
-        const params = new URLSearchParams({
-          start_date: dateRange.start,
-          end_date: dateRange.end,
-        });
-        params.append('branch', branchKey);
+          try {
+            const [kpisRes, productsRes, salespersonRes, customersRes, arRes, trendRes] = await Promise.all([
+              fetch(`/api/sales/kpis?${params}`),
+              fetch(`/api/sales/top-products?${params}`),
+              fetch(`/api/sales/by-salesperson?${params}`),
+              fetch(`/api/sales/top-customers?${params}`),
+              fetch(`/api/sales/ar-status?${params}`),
+              fetch(`/api/sales/trend?${params}`),
+            ]);
 
-        try {
-          const [kpisRes, productsRes, salespersonRes, customersRes, arRes, trendRes] = await Promise.all([
-            fetch(`/api/sales/kpis?${params}`),
-            fetch(`/api/sales/top-products?${params}`),
-            fetch(`/api/sales/by-salesperson?${params}`),
-            fetch(`/api/sales/top-customers?${params}`),
-            fetch(`/api/sales/ar-status?${params}`),
-            fetch(`/api/sales/trend?${params}`),
-          ]);
+            const [kpisJ, productsJ, salespersonJ, customersJ, arJ, trendJ] = await Promise.all([
+              kpisRes.ok ? kpisRes.json() : { data: null },
+              productsRes.ok ? productsRes.json() : { data: [] },
+              salespersonRes.ok ? salespersonRes.json() : { data: [] },
+              customersRes.ok ? customersRes.json() : { data: [] },
+              arRes.ok ? arRes.json() : { data: [] },
+              trendRes.ok ? trendRes.json() : { data: [] },
+            ]);
 
-          const [kpisJ, productsJ, salespersonJ, customersJ, arJ, trendJ] = await Promise.all([
-            kpisRes.ok ? kpisRes.json() : { data: null },
-            productsRes.ok ? productsRes.json() : { data: [] },
-            salespersonRes.ok ? salespersonRes.json() : { data: [] },
-            customersRes.ok ? customersRes.json() : { data: [] },
-            arRes.ok ? arRes.json() : { data: [] },
-            trendRes.ok ? trendRes.json() : { data: [] },
-          ]);
-
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis: kpisJ.data,
-            topProducts: productsJ.data || [],
-            salesperson: salespersonJ.data || [],
-            topCustomers: customersJ.data || [],
-            arStatus: arJ.data || [],
-            trendData: trendJ.data || [],
-          });
-        } catch (branchErr) {
-          console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis: null,
-            topProducts: [],
-            salesperson: [],
-            topCustomers: [],
-            arStatus: [],
-            trendData: [],
-          });
-        }
-      }
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis: kpisJ.data,
+              topProducts: productsJ.data || [],
+              salesperson: salespersonJ.data || [],
+              topCustomers: customersJ.data || [],
+              arStatus: arJ.data || [],
+              trendData: trendJ.data || [],
+            };
+          } catch (branchErr) {
+            console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis: null, topProducts: [], salesperson: [],
+              topCustomers: [], arStatus: [], trendData: [],
+            };
+          }
+        })
+      );
       setData(results);
     } catch (err) {
       console.error('Error fetching sales comparison:', err);
+      setError('ไม่สามารถโหลดข้อมูลได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
   }, [branchesKey, dateRange, isLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  /* ─── Formatting ─── */
-  const fmt = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return `฿${v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    })}`;
-  };
-  const fmtShort = (v: number) => {
-    if (Math.abs(v) >= 1_000_000) return `฿${(v / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(v) >= 1_000) return `฿${(v / 1_000).toFixed(1)}K`;
-    return `฿${v.toFixed(0)}`;
-  };
-  const fmtK = (v: number) => Math.abs(v) >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : Math.abs(v) >= 1_000 ? `${(v / 1_000).toFixed(0)}K` : v.toFixed(0);
-  const fmtNum = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    });
-  };
-
-  /* ─── Short branch name helper ─── */
-  const shortName = (name: string) => name.replace(/บริษัท\s*|จำกัด/g, '').trim().substring(0, 20);
 
   /* ─── Computed: totals ─── */
   const totals = useMemo(() => {
@@ -217,9 +136,9 @@ export default function SalesComparisonPage() {
       axisPointer: { type: 'shadow' },
       formatter: (params: any) => {
         const name = params[0]?.axisValue || '';
-        let html = `<div class="font-semibold mb-1">${name}</div>`;
+        let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
         params.forEach((p: any) => {
-          html += `<div class="flex items-center gap-2"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ฿${fmtK(p.value)}</div>`;
+          html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
         });
         return html;
       },
@@ -236,7 +155,7 @@ export default function SalesComparisonPage() {
 
   /* 2. Sales Share - Donut Pie */
   const salesShareChart = useMemo(() => ({
-    tooltip: { trigger: 'item', formatter: '{b}: ฿{c} ({d}%)' },
+    tooltip: { trigger: 'item', formatter: (params: any) => `<div style="font-weight:600;margin-bottom:4px">${params.name}</div><div>${fmt(params.value)} (${params.percent.toFixed(1)}%)</div>` },
     legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 11 } },
     series: [{
       type: 'pie',
@@ -255,7 +174,17 @@ export default function SalesComparisonPage() {
 
   /* 3. Margin & Growth - Bar + Line Combo */
   const marginGrowthChart = useMemo(() => ({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: (params: any) => {
+        let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+        params.forEach((p: any) => {
+          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${Number(p.value).toFixed(2)}%</div>`;
+        });
+        return html;
+      },
+    },
     legend: { bottom: 0, textStyle: { fontSize: 11 } },
     grid: { top: 30, right: 60, bottom: 50, left: 50, containLabel: true },
     xAxis: { type: 'category', data: rankedData.map(b => shortName(b.branchName)), axisLabel: { rotate: 20, fontSize: 10 } },
@@ -271,7 +200,20 @@ export default function SalesComparisonPage() {
 
   /* 4. Orders & Avg Order Value - Bar + Line */
   const ordersChart = useMemo(() => ({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      formatter: (params: any) => {
+        let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+        params.forEach((p: any) => {
+          const val = p.seriesName === 'จำนวนออเดอร์'
+            ? Math.round(p.value).toLocaleString('th-TH')
+            : fmt(p.value);
+          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${val}</div>`;
+        });
+        return html;
+      },
+    },
     legend: { bottom: 0, textStyle: { fontSize: 11 } },
     grid: { top: 30, right: 60, bottom: 50, left: 50, containLabel: true },
     xAxis: { type: 'category', data: rankedData.map(b => shortName(b.branchName)), axisLabel: { rotate: 20, fontSize: 10 } },
@@ -292,7 +234,16 @@ export default function SalesComparisonPage() {
     const dates = Array.from(allDates).sort();
 
     return {
-      tooltip: { trigger: 'axis' },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       grid: { top: 30, right: 20, bottom: 50, left: 50, containLabel: true },
       xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 10 } },
@@ -325,7 +276,17 @@ export default function SalesComparisonPage() {
     const colors = ['#10b981', '#f59e0b', '#ef4444', '#dc2626'];
 
     return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       grid: { top: 30, right: 20, bottom: 50, left: 50, containLabel: true },
       xAxis: { type: 'category', data: rankedData.map(b => shortName(b.branchName)), axisLabel: { rotate: 20, fontSize: 10 } },
@@ -359,7 +320,15 @@ export default function SalesComparisonPage() {
     const top10 = products.slice(0, 10);
 
     return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          const name = params[0]?.axisValue || '';
+          const val = params[0]?.value ?? 0;
+          return `<div style="font-weight:600;margin-bottom:4px;">${name}</div><div>ยอดขาย: ${fmt(val)}</div>`;
+        },
+      },
       grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
       xAxis: { type: 'value', axisLabel: { formatter: (v: number) => `฿${fmtK(v)}` } },
       yAxis: { type: 'category', data: top10.map(p => p.name).reverse(), axisLabel: { fontSize: 10 } },
@@ -442,6 +411,17 @@ export default function SalesComparisonPage() {
             {[...Array(6)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-muted/20 animate-pulse" />)}
           </div>
           {[...Array(4)].map((_, i) => <div key={i} className="h-56 rounded-2xl bg-muted/20 animate-pulse" />)}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="h-16 w-16 rounded-2xl bg-rose-50 flex items-center justify-center mb-4">
+            <TrendingDown className="h-8 w-8 text-rose-400" />
+          </div>
+          <p className="text-lg font-semibold text-foreground">เกิดข้อผิดพลาด</p>
+          <p className="text-sm text-muted-foreground mt-1">{error}</p>
+          <button onClick={fetchData} className="mt-4 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+            ลองใหม่อีกครั้ง
+          </button>
         </div>
       ) : data.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -574,7 +554,7 @@ export default function SalesComparisonPage() {
           {/* ════════════════════════════════════════
              4) Sales vs Profit + Sales Share
              ════════════════════════════════════════ */}
-          <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<DollarSign className="h-4 w-4 text-indigo-600" />} title="ยอดขาย vs กำไรขั้นต้น" desc="เปรียบเทียบรายได้และกำไรแต่ละกิจการ" />
               <div className="px-6 pb-5">
@@ -593,7 +573,7 @@ export default function SalesComparisonPage() {
           {/* ════════════════════════════════════════
              5) Margin & Growth + Orders
              ════════════════════════════════════════ */}
-          <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<Percent className="h-4 w-4 text-violet-600" />} title="Gross Margin & Sales Growth" desc="อัตรากำไรขั้นต้นและอัตราเติบโต" />
               <div className="px-6 pb-5">
@@ -622,7 +602,7 @@ export default function SalesComparisonPage() {
           {/* ════════════════════════════════════════
              7) Top Products + Customer Metrics
              ════════════════════════════════════════ */}
-          <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<Package className="h-4 w-4 text-amber-600" />} title="สินค้าขายดี Top 10" desc="สินค้าที่ขายดีจากทุกกิจการ" />
               <div className="px-6 pb-5">

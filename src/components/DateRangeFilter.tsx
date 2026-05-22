@@ -28,9 +28,11 @@ function isValidDDMMYYYY(dateStr: string): boolean {
   const [day, month, year] = dateStr.split('/');
   const d = Number(day);
   const m = Number(month);
+  const y = Number(year);
   if (m < 1 || m > 12) return false;
-  if (d < 1 || d > 31) return false;
-  return true;
+  if (d < 1) return false;
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 function processDateInference(input: string): string {
@@ -106,18 +108,15 @@ export function DateRangeFilter({ value, onChange, defaultKey = 'THIS_MONTH', cl
   }, [value]);
 
   const handlePresetChange = (key: DateRangeKey) => {
-    console.log('📅 DateRangeFilter: Changing to', key);
     setSelectedKey(key);
 
     if (key === 'CUSTOM') {
       setShowCustom(true);
-      // Initialize with current values
       setCustomStartDisplay(formatDateToDDMMYYYY(value.start));
       setCustomEndDisplay(formatDateToDDMMYYYY(value.end));
     } else {
       setShowCustom(false);
       const range = DATE_RANGES[key].getValue();
-      console.log('📅 DateRangeFilter: New range', range);
       onChange(range);
     }
   };
@@ -128,11 +127,7 @@ export function DateRangeFilter({ value, onChange, defaultKey = 'THIS_MONTH', cl
 
     if (isValidDDMMYYYY(displayValue)) {
       const parsed = parseDateFromDDMMYYYY(displayValue);
-      console.log('📅 DateRangeFilter: Custom start changed to', parsed);
-      onChange({
-        start: parsed,
-        end: value.end,
-      });
+      onChange({ start: parsed, end: value.end });
     }
   };
 
@@ -142,11 +137,7 @@ export function DateRangeFilter({ value, onChange, defaultKey = 'THIS_MONTH', cl
 
     if (isValidDDMMYYYY(displayValue)) {
       const parsed = parseDateFromDDMMYYYY(displayValue);
-      console.log('📅 DateRangeFilter: Custom end changed to', parsed);
-      onChange({
-        start: value.start,
-        end: parsed,
-      });
+      onChange({ start: value.start, end: parsed });
     }
   };
 

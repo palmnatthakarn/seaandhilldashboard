@@ -742,20 +742,6 @@ function SalesReportContent() {
     ? salesByCategory 
     : salesByCategory.filter(item => item.categoryCode === selectedCategory);
 
-  // Debug: Log filtered data
-  if (selectedReport === 'by-category') {
-    console.log('📊 Report Selected Category:', selectedCategory);
-    console.log('📊 Report Total Data Count:', salesByCategory.length);
-    console.log('📊 Report Unique Categories:', uniqueCategories);
-    if (selectedCategory !== 'ALL') {
-      console.log('📊 Report Filtered Items Count:', filteredSalesByCategory.length);
-      console.log('📊 Report Total Sales (filtered):', filteredSalesByCategory.reduce((sum, item) => sum + item.totalSales, 0));
-      console.log('📊 First 3 filtered items:', filteredSalesByCategory.slice(0, 3));
-    } else {
-      console.log('📊 Report Total Sales (all):', salesByCategory.reduce((sum, item) => sum + item.totalSales, 0));
-    }
-  }
-
   // Render report content based on selected type
   const renderReportContent = () => {
     switch (selectedReport) {

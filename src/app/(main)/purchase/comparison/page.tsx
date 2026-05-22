@@ -6,26 +6,15 @@ import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
 import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { SimpleKPICard, KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { KPIGrid } from '@/components/comparison/SimpleKPICard';
 import {
   ShoppingBag, Package, FileText, Users, CreditCard, BarChart3,
-  TrendingUp, TrendingDown, Building2, Trophy, Medal, Award,
-  ArrowUpRight, ArrowDownRight, Minus, Percent, Clock, Receipt,
-  Layers, Wallet, DollarSign, Box, AlertCircle,
+  TrendingUp, Building2, Trophy, Medal, Award,
+  Receipt, AlertCircle,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
+import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
-import type { DateRange, PurchaseKPIs, TopSupplier, PurchaseTrendData, PurchaseByCategory, APOutstanding } from '@/lib/data/types';
-
-/* ─── Branch color palette ─── */
-const BRANCH_PALETTE = [
-  { gradient: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-50', text: 'text-indigo-700', hex: '#6366f1', light: 'bg-indigo-500' },
-  { gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700', hex: '#10b981', light: 'bg-emerald-500' },
-  { gradient: 'from-amber-500 to-amber-600', bg: 'bg-amber-50', text: 'text-amber-700', hex: '#f59e0b', light: 'bg-amber-500' },
-  { gradient: 'from-rose-500 to-rose-600', bg: 'bg-rose-50', text: 'text-rose-700', hex: '#ef4444', light: 'bg-rose-500' },
-  { gradient: 'from-cyan-500 to-cyan-600', bg: 'bg-cyan-50', text: 'text-cyan-700', hex: '#06b6d4', light: 'bg-cyan-500' },
-  { gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700', hex: '#8b5cf6', light: 'bg-violet-500' },
-];
+import type { PurchaseKPIs, TopSupplier, PurchaseTrendData, PurchaseByCategory, APOutstanding } from '@/lib/data/types';
 
 /* ─── Full branch data interface ─── */
 interface BranchPurchaseData {
@@ -46,40 +35,6 @@ interface BranchPurchaseData {
 }
 
 /* ═══════════════════════════════════════════════
-   Helper sub-components
-   ═══════════════════════════════════════════════ */
-
-function GrowthBadge({ value }: { value?: number }) {
-  if (value === undefined || value === null) return null;
-  const isUp = value > 0;
-  const isDown = value < 0;
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-md',
-      isUp && 'bg-emerald-50 text-emerald-600',
-      isDown && 'bg-rose-50 text-rose-600',
-      !isUp && !isDown && 'bg-muted text-muted-foreground',
-    )}>
-      {isUp ? <ArrowUpRight className="w-3 h-3" /> : isDown ? <ArrowDownRight className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
-      {Math.abs(value).toFixed(1)}%
-    </span>
-  );
-}
-
-function SectionHeader({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="px-6 pt-5 pb-3">
-      <h2 className="text-base font-bold text-foreground flex items-center gap-2">{icon}{title}</h2>
-      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-    </div>
-  );
-}
-
-function BranchDot({ idx }: { idx: number }) {
-  return <div className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', BRANCH_PALETTE[idx % BRANCH_PALETTE.length].light)} />;
-}
-
-/* ═══════════════════════════════════════════════
    Main Page
    ═══════════════════════════════════════════════ */
 
@@ -87,6 +42,7 @@ export default function PurchaseComparisonPage() {
   const { selectedBranches, availableBranches, isLoaded } = useComparison();
   const { dateRange, setDateRange } = useDateRangeStore();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BranchPurchaseData[]>([]);
 
   // Stable key to prevent infinite re-fetch from array reference changes
@@ -96,85 +52,75 @@ export default function PurchaseComparisonPage() {
   const fetchData = useCallback(async () => {
     if (!isLoaded || selectedBranches.length === 0) return;
     setLoading(true);
+    setError(null);
     try {
       const branchKeys = selectedBranches.filter((k: string) => k !== 'ALL');
-      const results: BranchPurchaseData[] = [];
 
-      for (const branchKey of branchKeys) {
-        const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+      const results = await Promise.all(
+        branchKeys.map(async (branchKey): Promise<BranchPurchaseData> => {
+          const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+          const params = new URLSearchParams({ start_date: dateRange.start, end_date: dateRange.end });
+          params.append('branch', branchKey);
 
-        const params = new URLSearchParams({
-          start_date: dateRange.start,
-          end_date: dateRange.end,
-        });
-        params.append('branch', branchKey);
+          try {
+            const [kpisRes, suppliersRes, trendRes, categoryRes, apRes] = await Promise.all([
+              fetch(`/api/purchase/kpis?${params}`),
+              fetch(`/api/purchase/top-suppliers?${params}`),
+              fetch(`/api/purchase/trend?${params}`),
+              fetch(`/api/purchase/by-category?${params}`),
+              fetch(`/api/purchase/ap-outstanding?${params}`),
+            ]);
 
-        try {
-          const [kpisRes, suppliersRes, trendRes, categoryRes, apRes] = await Promise.all([
-            fetch(`/api/purchase/kpis?${params}`),
-            fetch(`/api/purchase/top-suppliers?${params}`),
-            fetch(`/api/purchase/trend?${params}`),
-            fetch(`/api/purchase/by-category?${params}`),
-            fetch(`/api/purchase/ap-outstanding?${params}`),
-          ]);
+            const [kpisJ, suppliersJ, trendJ, categoryJ, apJ] = await Promise.all([
+              kpisRes.ok ? kpisRes.json() : { data: null },
+              suppliersRes.ok ? suppliersRes.json() : { data: [] },
+              trendRes.ok ? trendRes.json() : { data: [] },
+              categoryRes.ok ? categoryRes.json() : { data: [] },
+              apRes.ok ? apRes.json() : { data: [] },
+            ]);
 
-          const [kpisJ, suppliersJ, trendJ, categoryJ, apJ] = await Promise.all([
-            kpisRes.ok ? kpisRes.json() : { data: null },
-            suppliersRes.ok ? suppliersRes.json() : { data: [] },
-            trendRes.ok ? trendRes.json() : { data: [] },
-            categoryRes.ok ? categoryRes.json() : { data: [] },
-            apRes.ok ? apRes.json() : { data: [] },
-          ]);
+            const kpis = kpisJ.data as PurchaseKPIs | null;
+            const totalPurchaseValue = kpis?.totalPurchases?.value || 0;
+            const poCount = kpis?.totalPOCount?.value || 0;
+            const avgPOValue = kpis?.avgPOValue?.value || 0;
+            const itemsPurchased = kpis?.totalItemsPurchased?.value || 0;
+            const apData = apJ.data || [];
+            const apOutstandingTotal = apData.reduce((s: number, ap: APOutstanding) => s + ap.totalOutstanding, 0);
+            const apOverdue = apData.reduce((s: number, ap: APOutstanding) => s + ap.overdueAmount, 0);
+            const supplierCount = (suppliersJ.data || []).length;
 
-          const kpis = kpisJ.data as PurchaseKPIs | null;
-          const totalPurchaseValue = kpis?.totalPurchases?.value || 0;
-          const poCount = kpis?.totalPOCount?.value || 0;
-          const avgPOValue = kpis?.avgPOValue?.value || 0;
-          const itemsPurchased = kpis?.totalItemsPurchased?.value || 0;
-          const apData = apJ.data || [];
-          const apOutstandingTotal = apData.reduce((s: number, ap: APOutstanding) => s + ap.totalOutstanding, 0);
-          const apOverdue = apData.reduce((s: number, ap: APOutstanding) => s + ap.overdueAmount, 0);
-          const supplierCount = (suppliersJ.data || []).length;
-
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis,
-            topSuppliers: suppliersJ.data || [],
-            trendData: trendJ.data || [],
-            byCategory: categoryJ.data || [],
-            apOutstanding: apData,
-            totalPurchaseValue,
-            poCount,
-            avgPOValue,
-            supplierCount,
-            apOutstandingTotal,
-            apOverdue,
-            itemsPurchased,
-          });
-        } catch (branchErr) {
-          console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis: null,
-            topSuppliers: [],
-            trendData: [],
-            byCategory: [],
-            apOutstanding: [],
-            totalPurchaseValue: 0,
-            poCount: 0,
-            avgPOValue: 0,
-            supplierCount: 0,
-            apOutstandingTotal: 0,
-            apOverdue: 0,
-            itemsPurchased: 0,
-          });
-        }
-      }
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis,
+              topSuppliers: suppliersJ.data || [],
+              trendData: trendJ.data || [],
+              byCategory: categoryJ.data || [],
+              apOutstanding: apData,
+              totalPurchaseValue,
+              poCount,
+              avgPOValue,
+              supplierCount,
+              apOutstandingTotal,
+              apOverdue,
+              itemsPurchased,
+            };
+          } catch (branchErr) {
+            console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis: null, topSuppliers: [], trendData: [], byCategory: [], apOutstanding: [],
+              totalPurchaseValue: 0, poCount: 0, avgPOValue: 0,
+              supplierCount: 0, apOutstandingTotal: 0, apOverdue: 0, itemsPurchased: 0,
+            };
+          }
+        })
+      );
       setData(results);
     } catch (err) {
       console.error('Error fetching purchase comparison:', err);
+      setError('ไม่สามารถโหลดข้อมูลได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
@@ -182,28 +128,6 @@ export default function PurchaseComparisonPage() {
 
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  /* ─── Formatting ─── */
-  const fmt = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return `฿${v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    })}`;
-  };
-  const fmtShort = (v: number) => {
-    if (Math.abs(v) >= 1_000_000) return `฿${(v / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(v) >= 1_000) return `฿${(v / 1_000).toFixed(1)}K`;
-    return `฿${v.toFixed(0)}`;
-  };
-  const fmtNum = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    });
-  };
-  const shortName = (name: string) => name.replace(/บริษัท\s*|จำกัด/g, '').trim().substring(0, 25);
 
   /* ─── Computed: totals ─── */
   const totals = useMemo(() => ({
@@ -219,10 +143,6 @@ export default function PurchaseComparisonPage() {
   const rankedData = useMemo(() =>
     [...data].sort((a, b) => b.totalPurchaseValue - a.totalPurchaseValue), [data]);
 
-  /* ─── Best performer (highest purchase value) ─── */
-  const bestPerformer = rankedData[0];
-
-  /* ═══ Render ═══ */
   // Framer motion variants
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -233,7 +153,6 @@ export default function PurchaseComparisonPage() {
     visible: { opacity: 1, y: 0, transition: { duration: 0.4 } }
   };
 
-  /* ═══ Render ═══ */
   return (
     <motion.div 
       className="space-y-6"
@@ -261,6 +180,17 @@ export default function PurchaseComparisonPage() {
             {[...Array(6)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-muted/20 animate-pulse" />)}
           </div>
           {[...Array(4)].map((_, i) => <div key={i} className="h-56 rounded-2xl bg-muted/20 animate-pulse" />)}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="h-16 w-16 rounded-2xl bg-rose-50 flex items-center justify-center mb-4">
+            <AlertCircle className="h-8 w-8 text-rose-400" />
+          </div>
+          <p className="text-lg font-semibold text-foreground">เกิดข้อผิดพลาด</p>
+          <p className="text-sm text-muted-foreground mt-1">{error}</p>
+          <button onClick={fetchData} className="mt-4 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+            ลองใหม่อีกครั้ง
+          </button>
         </div>
       ) : data.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -395,7 +325,7 @@ export default function PurchaseComparisonPage() {
                     extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
                     formatter: (params: any) => {
                       const p = params[0];
-                      return `<div class="font-semibold mb-1">${p.name}</div><div>${p.seriesName}: ${fmtShort(p.value)}</div>`;
+                      return `<div style="font-weight:600;margin-bottom:4px;">${p.name}</div><div>${p.seriesName}: ${fmt(p.value)}</div>`;
                     },
                   },
                   grid: { top: 16, right: 16, bottom: 40, left: 16, containLabel: true },
@@ -428,7 +358,7 @@ export default function PurchaseComparisonPage() {
             </div>
           </motion.div>
 
-          <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             {/* ════════════════════════════════════════
                4) PO Count & Avg PO Value (Bar + Line Combo)
                ════════════════════════════════════════ */}
@@ -448,6 +378,16 @@ export default function PurchaseComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
+                      formatter: (params: any) => {
+                        let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+                        params.forEach((p: any) => {
+                          const val = p.seriesName === 'จำนวน PO'
+                            ? Math.round(p.value).toLocaleString('th-TH')
+                            : fmt(p.value);
+                          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${val}</div>`;
+                        });
+                        return html;
+                      },
                     },
                     legend: { bottom: 0, textStyle: { color: '#64748b', fontSize: 11 }, itemWidth: 12, itemHeight: 8, itemGap: 16 },
                     grid: { top: 16, right: 50, bottom: 40, left: 50, containLabel: true },
@@ -558,7 +498,7 @@ export default function PurchaseComparisonPage() {
                       formatter: (params: any) => {
                         let html = `<div class="font-semibold mb-1">${params[0].axisValue}</div>`;
                         params.forEach((p: any) => {
-                          html += `<div class="flex items-center gap-2"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtShort(p.value)}</div>`;
+                          html += `<div style="display:flex;align-items:center;gap:6px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
                         });
                         return html;
                       },
@@ -620,6 +560,13 @@ export default function PurchaseComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
+                      formatter: (params: any) => {
+                        let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+                        params.forEach((p: any) => {
+                          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
+                        });
+                        return html;
+                      },
                     },
                     legend: { bottom: 0, textStyle: { color: '#64748b', fontSize: 11 }, itemWidth: 12, itemHeight: 8, itemGap: 16 },
                     grid: { top: 16, right: 16, bottom: 40, left: 16, containLabel: true },

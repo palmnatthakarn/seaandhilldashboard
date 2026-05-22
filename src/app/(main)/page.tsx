@@ -455,7 +455,7 @@ export default function Dashboard() {
 
       {/* Charts Section */}
       <ErrorBoundary>
-        <motion.div variants={itemVariants} className="grid gap-6 lg:grid-cols-7">
+        <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">
           {loading ? (
             <>
               <div className="lg:col-span-4 rounded-xl border border-border bg-card p-6 h-[400px] animate-pulse">
@@ -482,7 +482,7 @@ export default function Dashboard() {
 
       {/* Bottom Section */}
       <ErrorBoundary>
-        <motion.div variants={itemVariants} className="grid gap-6 lg:grid-cols-3">
+        <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {loading ? (
             <>
               <div className="lg:col-span-2 rounded-xl border border-border bg-card p-6 animate-pulse">

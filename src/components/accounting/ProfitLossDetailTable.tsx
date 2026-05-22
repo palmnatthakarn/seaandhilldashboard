@@ -192,8 +192,9 @@ export function ProfitLossDetailTable({
   const fmt = (v: number) => (v !== 0 ? formatCurrency(v) : '-');
 
   // ── CSS helpers ──
-  const cellCls  = 'px-4 py-2 text-right tabular-nums text-sm whitespace-nowrap min-w-[130px]';
-  const labelCls = 'sticky left-0 z-10 px-12 py-2 text-sm min-w-[300px] bg-background';
+  const cellCls  = 'relative z-0 px-4 py-2 text-right tabular-nums text-sm whitespace-nowrap min-w-[130px]';
+  const stickyLabelBase = 'sticky left-0 z-30 min-w-[320px] w-[320px] max-w-[320px] bg-background';
+  const labelCls = `${stickyLabelBase} px-12 py-2 text-sm`;
   const tableColSpan = showBranchComparison
     ? 1 + (comparisonBranches.length * displayPeriods.length) + 2
     : displayPeriods.length + (viewMode === 'normal' ? 2 : 3);
@@ -220,13 +221,13 @@ export function ProfitLossDetailTable({
 
   // ── Shared render helpers ──
   const SectionHeader = ({ label }: { label: string }) => (
-    <tr className="border-b border-border">
+    <tr className="border-b border-border bg-muted/10">
       <td
-        colSpan={tableColSpan}
-        className="sticky left-0 px-4 py-2 font-semibold text-foreground text-xs uppercase tracking-wider bg-background"
+        className={`${stickyLabelBase} px-4 py-2 font-semibold text-foreground text-xs uppercase tracking-wider`}
       >
         {label}
       </td>
+      <td colSpan={tableColSpan - 1} className="bg-muted/10" />
     </tr>
   );
 
@@ -287,7 +288,7 @@ export function ProfitLossDetailTable({
 
     return (
       <tr className={`bg-muted/7 ${doubleBorder ? 'border-b-1' : 'border-b'} border-border`}>
-        <td className={`sticky left-0 z-10 bg-muted/5 px-6 py-2 text-xs font-bold text-foreground/100`}>
+        <td className={`${stickyLabelBase} px-6 py-2 text-xs font-bold text-foreground`}>
           {label}
         </td>
         {displayPeriods.map((p, i) => {
@@ -329,7 +330,7 @@ export function ProfitLossDetailTable({
 
     return (
       <tr className="border-t border-border font-bold">
-        <td className="sticky left-0 z-10 px-4 py-3 text-sm bg-background">{label}</td>
+        <td className={`${stickyLabelBase} px-4 py-3 text-sm`}>{label}</td>
         {displayPeriods.map((p, i) => {
           const v = values(p);
           const isFirstB = viewMode === 'comparison' && i === periodsA.length;
@@ -406,7 +407,7 @@ export function ProfitLossDetailTable({
     strong?: boolean;
   }) => (
     <tr className={`${strong ? 'border-t border-border font-bold' : 'border-b border-border bg-muted/5 font-bold'}`}>
-      <td className={`sticky left-0 z-10 ${strong ? 'px-4 py-3 text-sm bg-background' : 'bg-muted/5 px-6 py-2 text-xs'} min-w-[300px]`}>
+      <td className={`${stickyLabelBase} ${strong ? 'px-4 py-3 text-sm' : 'px-6 py-2 text-xs'}`}>
         {label}
       </td>
       {comparisonBranches.map((branch) =>
@@ -427,8 +428,8 @@ export function ProfitLossDetailTable({
   );
 
   return (
-    <div className="overflow-auto w-full">
-      <table className="w-full text-sm border-collapse">
+    <div className="relative isolate overflow-auto w-full">
+      <table className="w-full text-sm border-separate border-spacing-0">
         {/* ── Header ── */}
         <thead>
           {showBranchComparison && (

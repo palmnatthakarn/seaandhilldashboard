@@ -6,26 +6,15 @@ import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
 import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { SimpleKPICard, KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { KPIGrid } from '@/components/comparison/SimpleKPICard';
 import {
-  Package, AlertTriangle, AlertCircle, BarChart3, Activity, Layers,
-  TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Minus,
-  RefreshCw, Archive, Box, Warehouse, RotateCcw, Clock, Boxes,
-  Building2, Trophy, Medal, Award, Calendar, Percent, DollarSign,
+  Package, AlertTriangle, AlertCircle, BarChart3,
+  TrendingUp, RefreshCw, Clock, Boxes,
+  Building2, Trophy, Medal, Award, Calendar, DollarSign,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
+import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
-import type { DateRange, InventoryKPIs, TopProduct } from '@/lib/data/types';
-
-/* ─── Branch color palette ─── */
-const BRANCH_PALETTE = [
-  { gradient: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-50', text: 'text-indigo-700', hex: '#6366f1', light: 'bg-indigo-500' },
-  { gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700', hex: '#10b981', light: 'bg-emerald-500' },
-  { gradient: 'from-amber-500 to-amber-600', bg: 'bg-amber-50', text: 'text-amber-700', hex: '#f59e0b', light: 'bg-amber-500' },
-  { gradient: 'from-rose-500 to-rose-600', bg: 'bg-rose-50', text: 'text-rose-700', hex: '#ef4444', light: 'bg-rose-500' },
-  { gradient: 'from-cyan-500 to-cyan-600', bg: 'bg-cyan-50', text: 'text-cyan-700', hex: '#06b6d4', light: 'bg-cyan-500' },
-  { gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700', hex: '#8b5cf6', light: 'bg-violet-500' },
-];
+import type { InventoryKPIs, TopProduct, InventoryTurnover, SlowMovingItem } from '@/lib/data/types';
 
 /* ─── Branch data interface ─── */
 interface BranchInventoryData {
@@ -49,23 +38,6 @@ interface BranchInventoryData {
 }
 
 /* ═══════════════════════════════════════════════
-   Helper sub-components
-   ═══════════════════════════════════════════════ */
-
-function SectionHeader({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="px-6 pt-5 pb-3">
-      <h2 className="text-base font-bold text-foreground flex items-center gap-2">{icon}{title}</h2>
-      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-    </div>
-  );
-}
-
-function BranchDot({ idx }: { idx: number }) {
-  return <div className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', BRANCH_PALETTE[idx % BRANCH_PALETTE.length].light)} />;
-}
-
-/* ═══════════════════════════════════════════════
    Main Page
    ═══════════════════════════════════════════════ */
 
@@ -73,6 +45,7 @@ export default function InventoryComparisonPage() {
   const { selectedBranches, availableBranches, isLoaded } = useComparison();
   const { dateRange, setDateRange } = useDateRangeStore();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BranchInventoryData[]>([]);
 
   // Stable key to prevent infinite re-fetch from array reference changes
@@ -82,95 +55,93 @@ export default function InventoryComparisonPage() {
   const fetchData = useCallback(async () => {
     if (!isLoaded || selectedBranches.length === 0) return;
     setLoading(true);
+    setError(null);
     try {
       const branchKeys = selectedBranches.filter((k: string) => k !== 'ALL');
-      const results: BranchInventoryData[] = [];
 
-      for (const branchKey of branchKeys) {
-        const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
-        
-        try {
-          // Fetch KPIs and top products
-          const params = new URLSearchParams({ 
+      const results = await Promise.all(
+        branchKeys.map(async (branchKey): Promise<BranchInventoryData> => {
+          const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+          const params = new URLSearchParams({
             as_of_date: dateRange.end,
             start_date: dateRange.start,
-            end_date: dateRange.end
+            end_date: dateRange.end,
           });
           params.append('branch', branchKey);
-          
-          const [kpisRes, productsRes] = await Promise.all([
-            fetch(`/api/inventory/kpis?${params}`),
-            fetch(`/api/inventory/top-products?${params}`)
-          ]);
 
-          const [kpisData, productsData] = await Promise.all([
-            kpisRes.ok ? kpisRes.json() : { data: null },
-            productsRes.ok ? productsRes.json() : { data: [] }
-          ]);
+          try {
+            const [kpisRes, productsRes, turnoverRes, slowMovingRes] = await Promise.all([
+              fetch(`/api/inventory/kpis?${params}`),
+              fetch(`/api/inventory/top-products?${params}`),
+              fetch(`/api/inventory/turnover?${params}`),
+              fetch(`/api/inventory/slow-moving?${params}`),
+            ]);
 
-          const kpis = kpisData.data as InventoryKPIs | null;
-          const topProducts = (productsData.data || []).slice(0, 5);
+            const [kpisData, productsData, turnoverJson, slowMovingJson] = await Promise.all([
+              kpisRes.ok ? kpisRes.json() : { data: null },
+              productsRes.ok ? productsRes.json() : { data: [] },
+              turnoverRes.ok ? turnoverRes.json() : { data: [] },
+              slowMovingRes.ok ? slowMovingRes.json() : { data: [] },
+            ]);
 
-          // Calculate derived metrics
-          const totalValue = kpis?.totalInventoryValue?.value || 0;
-          const totalItems = kpis?.totalItemsInStock?.value || 0;
-          const turnoverRate = totalValue > 0 ? 4 : 0; // Default turnover rate
-          const deadStockValue = totalValue * 0.15; // Estimate 15% dead stock
-          const deadStockPercent = 15;
-          
-          // Stock aging (simulated distribution based on turnover)
-          const fastMoving = turnoverRate > 6;
-          const aging0to30 = fastMoving ? totalValue * 0.6 : totalValue * 0.3;
-          const aging31to60 = fastMoving ? totalValue * 0.25 : totalValue * 0.3;
-          const aging61to90 = fastMoving ? totalValue * 0.1 : totalValue * 0.2;
-          const aging90plus = Math.max(0, totalValue - aging0to30 - aging31to60 - aging61to90);
+            const kpis = kpisData.data as InventoryKPIs | null;
+            const topProducts = (productsData.data || []).slice(0, 5) as TopProduct[];
+            const turnoverItems = (turnoverJson.data || []) as InventoryTurnover[];
+            const slowMovingItems = (slowMovingJson.data || []) as SlowMovingItem[];
 
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            totalValue,
-            totalItems,
-            turnoverRate,
-            deadStockValue,
-            deadStockPercent,
-            lowStockCount: kpis?.lowStockAlerts?.value || 0,
-            overstockCount: kpis?.overstockAlerts?.value || 0,
-            slowMovingCount: Math.round(totalItems * 0.1), // Estimate 10% slow moving
-            avgStockDays: turnoverRate > 0 ? 365 / turnoverRate : 0,
-            stockToSalesRatio: 1 / (turnoverRate || 1),
-            topProducts,
-            aging0to30,
-            aging31to60,
-            aging61to90,
-            aging90plus,
-          });
-        } catch (err) {
-          console.warn(`Failed to fetch data for branch ${branchKey}:`, err);
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            totalValue: 0,
-            totalItems: 0,
-            turnoverRate: 0,
-            deadStockValue: 0,
-            deadStockPercent: 0,
-            lowStockCount: 0,
-            overstockCount: 0,
-            slowMovingCount: 0,
-            avgStockDays: 0,
-            stockToSalesRatio: 0,
-            topProducts: [],
-            aging0to30: 0,
-            aging31to60: 0,
-            aging61to90: 0,
-            aging90plus: 0,
-          });
-        }
-      }
+            const totalValue = kpis?.totalInventoryValue?.value || 0;
+            const totalItems = kpis?.totalItemsInStock?.value || 0;
+            const turnoverRate = turnoverItems.length > 0
+              ? turnoverItems.reduce((s, t) => s + t.turnoverRatio, 0) / turnoverItems.length
+              : 0;
+            const deadStockValue = slowMovingItems.reduce((s, item) => s + item.stockValue, 0);
+            const deadStockPercent = totalValue > 0 ? (deadStockValue / totalValue) * 100 : 0;
+            const slowMovingCount = slowMovingItems.length;
+
+            // Stock aging from real turnover data — grouped by days-to-sell per category
+            const aging0to30 = turnoverItems.filter(t => t.daysToSell <= 30).reduce((s, t) => s + t.avgInventoryValue, 0);
+            const aging31to60 = turnoverItems.filter(t => t.daysToSell > 30 && t.daysToSell <= 60).reduce((s, t) => s + t.avgInventoryValue, 0);
+            const aging61to90 = turnoverItems.filter(t => t.daysToSell > 60 && t.daysToSell <= 90).reduce((s, t) => s + t.avgInventoryValue, 0);
+            const aging90plus = turnoverItems.filter(t => t.daysToSell > 90).reduce((s, t) => s + t.avgInventoryValue, 0);
+
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              totalValue,
+              totalItems,
+              turnoverRate,
+              deadStockValue,
+              deadStockPercent,
+              lowStockCount: kpis?.lowStockAlerts?.value || 0,
+              overstockCount: kpis?.overstockAlerts?.value || 0,
+              slowMovingCount,
+              avgStockDays: turnoverRate > 0 ? 365 / turnoverRate : 0,
+              stockToSalesRatio: 1 / (turnoverRate || 1),
+              topProducts,
+              aging0to30,
+              aging31to60,
+              aging61to90,
+              aging90plus,
+            };
+          } catch (err) {
+            console.warn(`Failed to fetch data for branch ${branchKey}:`, err);
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              totalValue: 0, totalItems: 0, turnoverRate: 0,
+              deadStockValue: 0, deadStockPercent: 0,
+              lowStockCount: 0, overstockCount: 0, slowMovingCount: 0,
+              avgStockDays: 0, stockToSalesRatio: 0, topProducts: [],
+              aging0to30: 0, aging31to60: 0, aging61to90: 0, aging90plus: 0,
+            };
+          }
+        })
+      );
 
       setData(results);
     } catch (err) {
       console.error('Error fetching inventory comparison:', err);
+      setError('ไม่สามารถโหลดข้อมูลได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
@@ -178,28 +149,6 @@ export default function InventoryComparisonPage() {
 
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  /* ─── Formatting ─── */
-  const fmt = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return `฿${v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    })}`;
-  };
-  const fmtShort = (v: number) => {
-    if (Math.abs(v) >= 1_000_000) return `฿${(v / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(v) >= 1_000) return `฿${(v / 1_000).toFixed(1)}K`;
-    return `฿${v.toFixed(0)}`;
-  };
-  const fmtNum = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    });
-  };
-  const shortName = (name: string) => name.replace(/บริษัท\s*|จำกัด/g, '').trim().substring(0, 25);
 
   /* ─── Computed totals ─── */
   const totals = useMemo(() => ({
@@ -209,11 +158,6 @@ export default function InventoryComparisonPage() {
     lowStockCount: data.reduce((s, d) => s + d.lowStockCount, 0),
     avgTurnover: data.length > 0 ? data.reduce((s, d) => s + d.turnoverRate, 0) / data.length : 0,
   }), [data]);
-
-  /* ─── Best performer (highest turnover) ─── */
-  const bestPerformer = useMemo(() => 
-    [...data].sort((a, b) => b.turnoverRate - a.turnoverRate)[0],
-  [data]);
 
   /* ─══════════════════════════════════════════════════════════════════
      CHART OPTIONS
@@ -226,9 +170,9 @@ export default function InventoryComparisonPage() {
       axisPointer: { type: 'shadow' },
       formatter: (params: any) => {
         const name = params[0]?.axisValue || '';
-        let html = `<div class="font-semibold mb-1">${name}</div>`;
+        let html = `<div style="font-weight:600;margin-bottom:4px;">${name}</div>`;
         params.forEach((p: any) => {
-          html += `<div class="flex items-center gap-2"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtShort(p.value)}</div>`;
+          html += `<div style="display:flex;align-items:center;gap:6px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
         });
         return html;
       },
@@ -261,7 +205,17 @@ export default function InventoryComparisonPage() {
 
   /* 3. Stock Aging Analysis - Stacked Bar */
   const agingChart = useMemo(() => ({
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: any) => {
+        let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+        params.forEach((p: any) => {
+          html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
+        });
+        return html;
+      },
+    },
     legend: { bottom: 0, textStyle: { fontSize: 11 } },
     grid: { top: 30, right: 20, bottom: 50, left: 60, containLabel: true },
     xAxis: { type: 'category', data: data.map(b => shortName(b.branchName)), axisLabel: { rotate: 20, fontSize: 10 } },
@@ -310,7 +264,17 @@ export default function InventoryComparisonPage() {
     const top10 = products.slice(0, 10);
 
     return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${fmt(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
       xAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtShort(v) } },
       yAxis: { type: 'category', data: top10.map(p => p.name).reverse(), axisLabel: { fontSize: 10 } },
@@ -380,6 +344,17 @@ export default function InventoryComparisonPage() {
             {[...Array(5)].map((_, i) => <div key={i} className="h-28 rounded-2xl bg-muted/20 animate-pulse" />)}
           </div>
           {[...Array(3)].map((_, i) => <div key={i} className="h-64 rounded-2xl bg-muted/20 animate-pulse" />)}
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="h-16 w-16 rounded-2xl bg-rose-50 flex items-center justify-center mb-4">
+            <AlertCircle className="h-8 w-8 text-rose-400" />
+          </div>
+          <p className="text-lg font-semibold text-foreground">เกิดข้อผิดพลาด</p>
+          <p className="text-sm text-muted-foreground mt-1">{error}</p>
+          <button onClick={fetchData} className="mt-4 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+            ลองใหม่อีกครั้ง
+          </button>
         </div>
       ) : data.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -531,7 +506,7 @@ export default function InventoryComparisonPage() {
                 <p className="text-emerald-200 mb-8">
                   จัดการสต็อกได้อย่างมีประสิทธิภาพด้วยอัตราหมุนเวียน {bestPerformer.turnoverRate.toFixed(2)}x ต่อปี
                 </p>
-                <div className="grid gap-6 grid-cols-2 sm:grid-cols-4 lg:grid-cols-6">
+                <div className="grid gap-6 grid-cols-2 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-6">
                   <div>
                     <p className="text-emerald-200 text-sm mb-1">มูลค่าสต็อก</p>
                     <p className="text-2xl font-bold">{fmtShort(bestPerformer.totalValue)}</p>
@@ -564,7 +539,7 @@ export default function InventoryComparisonPage() {
           {/* ════════════════════════════════════════
              3) Charts Section
              ════════════════════════════════════════ */}
-          <motion.div variants={itemVariants} className="grid gap-6 lg:grid-cols-2">
+          <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<Package className="h-4 w-4 text-indigo-600" />} title="มูลค่าสต็อกและ Dead Stock" desc="เปรียบเทียบมูลค่าสต็อกและสินค้าไม่เคลื่อนไหว" />
               <div className="px-4 pb-4">
@@ -580,7 +555,7 @@ export default function InventoryComparisonPage() {
             </div>
           </motion.div>
 
-          <motion.div variants={itemVariants} className="grid gap-6 lg:grid-cols-2">
+          <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<Clock className="h-4 w-4 text-amber-600" />} title="การแบ่งอายุสต็อก" desc="Stock Aging Analysis" />
               <div className="px-4 pb-4">
@@ -596,7 +571,7 @@ export default function InventoryComparisonPage() {
             </div>
           </motion.div>
 
-          <motion.div variants={itemVariants} className="grid gap-6 lg:grid-cols-2">
+          <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
             <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
               <SectionHeader icon={<TrendingUp className="h-4 w-4 text-sky-600" />} title="สินค้าขายดี Top 10" desc="สินค้าที่มียอดขายสูงสุดจากทุกกิจการ" />
               <div className="px-4 pb-4">

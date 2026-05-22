@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import type { SalesTrendData } from '@/lib/data/types';
+import { fmtFull, fmtCount } from '@/lib/formatters';
 
 interface SalesTrendChartProps {
   data: SalesTrendData[];
@@ -37,8 +38,8 @@ export function SalesTrendChart({ data, height = '400px' }: SalesTrendChartProps
 
           params.forEach((param: any) => {
             const value = param.seriesName === 'ยอดขาย'
-              ? `฿${Number(param.value).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
-              : `${param.value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} รายการ`;
+              ? fmtFull(param.value)
+              : `${fmtCount(param.value)} รายการ`;
 
             result += `<div style="margin-bottom: 4px;">
               ${param.marker} ${param.seriesName}: <strong>${value}</strong>

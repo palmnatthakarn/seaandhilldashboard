@@ -561,7 +561,7 @@ export default function PurchasePage() {
       </ErrorBoundary>
       </motion.div>
 
-      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
 
 
         {/* Top Suppliers */}
@@ -650,7 +650,7 @@ export default function PurchasePage() {
       </motion.div>
 
       {/* Purchase by Asset & Brand */}
-      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
 
         <ErrorBoundary>
           <DataCard

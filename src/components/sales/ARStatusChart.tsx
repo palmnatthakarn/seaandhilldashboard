@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import type { ARStatus } from '@/lib/data/types';
+import { fmtFull } from '@/lib/formatters';
 
 interface ARStatusChartProps {
   data: ARStatus[];
@@ -32,9 +33,8 @@ export function ARStatusChart({ data, height = '350px' }: ARStatusChartProps) {
           let result = `<div style="font-weight: bold; margin-bottom: 8px;">${status}</div>`;
 
           params.forEach((param: any) => {
-            const value = `฿${Number(param.value).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
             result += `<div style="margin-bottom: 4px;">
-              ${param.marker} ${param.seriesName}: <strong>${value}</strong>
+              ${param.marker} ${param.seriesName}: <strong>${fmtFull(param.value)}</strong>
             </div>`;
           });
 

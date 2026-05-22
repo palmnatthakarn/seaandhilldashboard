@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import type { SalesByCategory } from '@/lib/data/types';
+import { fmtFull } from '@/lib/formatters';
 
 interface SalesByCategoryChartProps {
   data: SalesByCategory[];
@@ -59,10 +60,9 @@ export function SalesByCategoryChart({ data, height = '400px' }: SalesByCategory
       tooltip: {
         trigger: 'item',
         formatter: (params: any) => {
-          const value = `฿${Number(params.value).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`;
           return `<div>
             <div style="font-weight: bold; margin-bottom: 4px;">${params.name}</div>
-            <div>${params.marker} ยอดขาย: <strong>${value}</strong></div>
+            <div>${params.marker} ยอดขาย: <strong>${fmtFull(params.value)}</strong></div>
             <div style="margin-top: 4px;">สัดส่วน: ${params.percent.toFixed(1)}%</div>
           </div>`;
         },

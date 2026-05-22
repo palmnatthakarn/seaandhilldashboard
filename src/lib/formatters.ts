@@ -80,3 +80,21 @@ export const formatPercent = (value: number | undefined | null): string => {
     if (value === undefined || value === null || isNaN(value)) return '0.0%';
     return value.toFixed(1) + '%';
 };
+
+/**
+ * Format number as full Thai currency with ฿ prefix
+ * Use in chart tooltips to show full numbers (e.g. ฿1,500,000.00)
+ */
+export const fmtFull = (value: number | undefined | null): string => {
+    if (value === undefined || value === null || isNaN(value)) return '฿0.00';
+    return `฿${value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+/**
+ * Format count (integer) with Thai locale separators
+ * Use in chart tooltips for non-currency counts
+ */
+export const fmtCount = (value: number | undefined | null): string => {
+    if (value === undefined || value === null || isNaN(value)) return '0';
+    return Math.round(value).toLocaleString('th-TH');
+};

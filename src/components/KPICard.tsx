@@ -236,7 +236,7 @@ export function KPICard({
                 {canViewQuery && (
                     <button
                         type="button"
-                        className="absolute bottom-3 right-3 p-2 rounded-lg bg-[hsl(var(--muted))]/50 hover:bg-[hsl(var(--muted))] opacity-0 group-hover:opacity-100 transition-all duration-200 cursor-pointer z-10"
+                        className="absolute bottom-3 right-3 p-2 rounded-lg bg-[hsl(var(--muted))]/50 hover:bg-[hsl(var(--muted))] opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-all duration-200 cursor-pointer z-10"
                         title="View SQL Query"
                         onClick={openPopup}
                     >

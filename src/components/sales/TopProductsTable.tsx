@@ -2,6 +2,7 @@
 
 import { HorizontalBarChart, type HorizontalBarItem } from '@/components/charts/HorizontalBarChart';
 import type { TopProduct } from '@/lib/data/types';
+import { fmtFull, fmtCount } from '@/lib/formatters';
 
 interface TopProductsChartProps {
   data: TopProduct[];
@@ -9,12 +10,6 @@ interface TopProductsChartProps {
 }
 
 export function TopProductsTable({ data, height = '400px' }: TopProductsChartProps) {
-  const formatFullCurrency = (value: number) => {
-    return value.toLocaleString('th-TH', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  };
 
   // Transform TopProduct[] to HorizontalBarItem[]
   const top10 = [...data]
@@ -44,9 +39,9 @@ export function TopProductsTable({ data, height = '400px' }: TopProductsChartPro
         <div style="font-weight: 600; margin-bottom: 6px;">อันดับ ${item.rank}: ${item.name}</div>
         <div style="color: #666; font-size: 12px; margin-bottom: 4px;">${item.subLabel}</div>
         <div style="margin-top: 8px;">
-          <div>ยอดขาย: <b style="color: #3b82f6;">฿${formatFullCurrency(item.value)}</b></div>
+          <div>ยอดขาย: <b style="color: #3b82f6;">${fmtFull(item.value)}</b></div>
           <div>สัดส่วน: <b>${percentage}%</b> ของ Top 10</div>
-          <div>จำนวนขาย: <b>${formatFullCurrency(extra.totalQtySold || 0)}</b> ชิ้น</div>
+          <div>จำนวนขาย: <b>${fmtCount(extra.totalQtySold || 0)}</b> ชิ้น</div>
           <div>กำไรขั้นต้น: <b style="color: ${profitColor};">${(extra.profitMarginPct || 0).toFixed(1)}%</b></div>
         </div>
       </div>

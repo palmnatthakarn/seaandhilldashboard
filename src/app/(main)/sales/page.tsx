@@ -353,7 +353,7 @@ export default function SalesPage() {
       </PermissionGuard>
 
       {/* Top Products & Sales by Branch */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
 
 
         <PermissionGuard componentKey="sales.by_branch">
@@ -420,7 +420,7 @@ export default function SalesPage() {
       </PermissionGuard>
 
       {/* Top Customers & AR Status */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
 
         <PermissionGuard componentKey="sales.top_customers">
           <ErrorBoundary>

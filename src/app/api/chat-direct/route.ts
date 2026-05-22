@@ -48,13 +48,10 @@ async function performWebSearch(query: string): Promise<{
   results: Array<{ title: string; url: string; snippet: string }>;
   message: string;
 }> {
-  console.log('[Tool] webSearch called:', query);
-
   // Primary: Use Serper API if configured (faster, more free quota)
   const serperApiKey = process.env.SERPER_API_KEY;
   if (serperApiKey) {
     try {
-      console.log('[webSearch] Using Serper API');
       const response = await fetch('https://google.serper.dev/search', {
         method: 'POST',
         headers: {
@@ -77,7 +74,6 @@ async function performWebSearch(query: string): Promise<{
           snippet: item.snippet || '',
         }));
 
-        console.log(`[webSearch] Serper found ${results.length} results`);
         return {
           results,
           message: `Found ${results.length} search results for "${query}"`,
@@ -92,7 +88,6 @@ async function performWebSearch(query: string): Promise<{
   const serpApiKey = process.env.SERPAPI_API_KEY;
   if (serpApiKey) {
     try {
-      console.log('[webSearch] Using SerpApi (fallback)');
       const params = new URLSearchParams({
         api_key: serpApiKey,
         engine: 'google',
@@ -111,7 +106,6 @@ async function performWebSearch(query: string): Promise<{
           snippet: item.snippet || '',
         }));
 
-        console.log(`[webSearch] SerpApi found ${results.length} results`);
         return {
           results,
           message: `Found ${results.length} search results for "${query}"`,
@@ -133,7 +127,6 @@ async function performWebSearch(query: string): Promise<{
 async function executeTool(name: string, args: Record<string, unknown>) {
   switch (name) {
     case 'executeQuery': {
-      console.log('[Tool] executeQuery called');
       const sql = (args.sql as string).trim().toUpperCase();
       if (!sql.startsWith('SELECT')) {
         return { error: 'Only SELECT queries allowed' };
@@ -179,11 +172,8 @@ export async function POST(req: Request) {
   try {
     const { messages } = await req.json();
 
-    console.log('[Chat Direct API] Received:', messages.length, 'messages');
-
     // Get cached schema for system prompt
     const schemaText = await getSchemaForPrompt();
-    console.log('[DEBUG] Schema loaded, length:', schemaText.length);
 
     // Build system instruction from template
     const systemInstruction = buildSystemInstruction(schemaText);
@@ -195,7 +185,6 @@ export async function POST(req: Request) {
     }));
 
     const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-    console.log('[DEBUG] Using model:', modelName);
 
     const model = genAI.getGenerativeModel({
       model: modelName,
@@ -214,62 +203,39 @@ export async function POST(req: Request) {
         let totalCandidatesTokens = 0;
         let totalTokens = 0;
 
-        console.log('[DEBUG] Starting chat with history:', geminiMessages.length - 1, 'messages');
-
         const chat = model.startChat({
-          history: geminiMessages.slice(0, -1), // All except last message
+          history: geminiMessages.slice(0, -1),
         });
 
-        // Send last message
         const lastMessage = geminiMessages[geminiMessages.length - 1];
-        console.log('[DEBUG] Sending message:', lastMessage.parts[0].text.substring(0, 100) + '...');
-
         let result = await chat.sendMessage(lastMessage.parts[0].text);
-        console.log('[DEBUG] Initial response received');
 
         while (iterations < MAX_ITERATIONS) {
           iterations++;
-          console.log('[DEBUG] Iteration:', iterations);
 
           const response = result.response;
           const functionCalls = response.functionCalls();
 
-          // Log token usage for this response
           const usageMetadata = response.usageMetadata;
           if (usageMetadata) {
-            const promptTokens = usageMetadata.promptTokenCount || 0;
-            const candidatesTokens = usageMetadata.candidatesTokenCount || 0;
-            const iterationTotal = usageMetadata.totalTokenCount || 0;
-
-            totalPromptTokens += promptTokens;
-            totalCandidatesTokens += candidatesTokens;
-            totalTokens += iterationTotal;
-
-            console.log(`[TOKEN] Iteration ${iterations}: prompt=${promptTokens}, response=${candidatesTokens}, total=${iterationTotal}`);
+            totalPromptTokens += usageMetadata.promptTokenCount || 0;
+            totalCandidatesTokens += usageMetadata.candidatesTokenCount || 0;
+            totalTokens += usageMetadata.totalTokenCount || 0;
           }
 
-          console.log('[DEBUG] Function calls:', functionCalls ? functionCalls.length : 0);
-
-          // If no function calls, stream the text response
           if (!functionCalls || functionCalls.length === 0) {
             const text = response.text();
-            console.log('[DEBUG] Final text response length:', text ? text.length : 0);
-            console.log('[DEBUG] Final text preview:', text ? text.substring(0, 200) + '...' : 'EMPTY');
             if (text) {
               controller.enqueue(encoder.encode(text));
             } else {
-              console.log('[DEBUG] WARNING: Empty response from model');
-              console.log('[DEBUG] Response candidates:', JSON.stringify(response.candidates, null, 2));
+              console.warn('[chat-direct] Empty response from model');
             }
             break;
           }
 
-          // Execute function calls
           const functionResponses = [];
           for (const call of functionCalls) {
-            console.log('[Tool Call]:', call.name, call.args);
             const toolResult = await executeTool(call.name, call.args as Record<string, unknown>);
-            console.log('[DEBUG] Tool result for', call.name, ':', JSON.stringify(toolResult).substring(0, 200) + '...');
             functionResponses.push({
               functionResponse: {
                 name: call.name,
@@ -278,31 +244,17 @@ export async function POST(req: Request) {
             });
           }
 
-          // Send function results back
-          console.log('[DEBUG] Sending function responses back to model...');
           result = await chat.sendMessage(functionResponses);
-          console.log('[DEBUG] Received response after function call');
         }
 
-        // Send final response if loop ended due to max iterations
         if (iterations >= MAX_ITERATIONS) {
-          console.log('[DEBUG] WARNING: Max iterations reached!');
+          console.warn('[chat-direct] Max iterations reached');
           const text = result.response.text();
           if (text) {
             controller.enqueue(encoder.encode(text));
           }
         }
 
-        // Log total token usage summary
-        console.log('========================================');
-        console.log('[TOKEN SUMMARY]');
-        console.log(`  Iterations: ${iterations}`);
-        console.log(`  Total Prompt Tokens: ${totalPromptTokens}`);
-        console.log(`  Total Response Tokens: ${totalCandidatesTokens}`);
-        console.log(`  Total Tokens: ${totalTokens}`);
-        console.log('========================================');
-
-        console.log('[DEBUG] Stream completed');
         controller.close();
       },
     });

@@ -76,6 +76,8 @@ export default function ComparisonPage() {
       ? `${(v / 1_000).toFixed(0)}K`
       : v.toFixed(0);
   const fmtP = (v: number) => `${v.toFixed(1)}%`;
+  const fmtFull = (v: number) => `฿${v.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtCount = (v: number) => Math.round(v).toLocaleString('th-TH');
 
   /* ─── Computed ─── */
   const topBranch = branches[0] || null;
@@ -107,7 +109,7 @@ export default function ComparisonPage() {
           const name = params[0]?.axisValue || '';
           let html = `<div class="font-semibold mb-1">${name}</div>`;
           params.forEach((p: any) => {
-            html += `<div class="flex items-center gap-2"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ฿${fmtK(p.value)}</div>`;
+            html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtFull(p.value)}</div>`;
           });
           return html;
         },
@@ -147,7 +149,18 @@ export default function ComparisonPage() {
   /* 2. Profit Margin & Growth - Bar + Line Combo */
   const marginGrowthChart = useMemo(
     () => ({
-      tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross' },
+        formatter: (params: any) => {
+          const name = params[0]?.axisValue || '';
+          let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtP(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       grid: { top: 30, right: 60, bottom: 50, left: 50, containLabel: true },
       xAxis: {
@@ -184,7 +197,12 @@ export default function ComparisonPage() {
   /* 3. Sales Share - Pie Chart */
   const salesShareChart = useMemo(
     () => ({
-      tooltip: { trigger: 'item', formatter: '{b}: ฿{c} ({d}%)' },
+      tooltip: {
+        trigger: 'item',
+        formatter: (params: any) => {
+          return `<div style="font-weight:600;margin-bottom:4px">${params.name}</div><div>${fmtFull(params.value)} (${params.percent.toFixed(1)}%)</div>`;
+        },
+      },
       legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 11 } },
       series: [
         {
@@ -208,7 +226,18 @@ export default function ComparisonPage() {
   /* 4. Inventory Comparison - Stacked Bar (Stock Value + Dead Stock) */
   const inventoryChart = useMemo(
     () => ({
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          const name = params[0]?.axisValue || '';
+          let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtFull(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       grid: { top: 30, right: 20, bottom: 50, left: 50, containLabel: true },
       xAxis: {
@@ -275,7 +304,13 @@ export default function ComparisonPage() {
     const maxCustomers = Math.max(...branches.map((b: BranchComparisonData) => b.uniqueCustomers), 1);
     const maxTransactions = Math.max(...branches.map((b: BranchComparisonData) => b.totalTransactions), 1);
     return {
-      tooltip: {},
+      tooltip: {
+        formatter: (params: any) => {
+          if (!params.value) return '';
+          const [customers, repeatRate, transactions] = params.value;
+          return `<div style="font-weight:600;margin-bottom:4px">${params.name}</div><div>ลูกค้า: ${fmtCount(customers)}</div><div>Repeat %: ${fmtP(repeatRate)}</div><div>Transactions: ${fmtCount(transactions)}</div>`;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       radar: {
         indicator: [
@@ -310,7 +345,17 @@ export default function ComparisonPage() {
     const months = Array.from(allMonths).sort();
 
     return {
-      tooltip: { trigger: 'axis' },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          const name = params[0]?.axisValue || '';
+          let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
+          params.forEach((p: any) => {
+            html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmtFull(p.value)}</div>`;
+          });
+          return html;
+        },
+      },
       legend: { bottom: 0, textStyle: { fontSize: 11 } },
       grid: { top: 30, right: 20, bottom: 50, left: 50, containLabel: true },
       xAxis: { type: 'category', data: months, axisLabel: { fontSize: 10 } },
@@ -348,7 +393,15 @@ export default function ComparisonPage() {
     const top10 = products.slice(0, 10);
 
     return {
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          const name = params[0]?.axisValue || '';
+          const val = params[0]?.value ?? 0;
+          return `<div style="font-weight:600;margin-bottom:4px">${name}</div><div>ยอดขาย: ${fmtFull(val)}</div>`;
+        },
+      },
       grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
       xAxis: { type: 'value', axisLabel: { formatter: (v: number) => `฿${fmtK(v)}` } },
       yAxis: {
@@ -488,7 +541,7 @@ export default function ComparisonPage() {
                   {totalRevenueAll > 0 ? ((topBranch.totalSales / totalRevenueAll) * 100).toFixed(1) : 0}% ของทั้งหมด
                 </p>
                 <motion.div
-                  className="grid gap-6 grid-cols-2 sm:grid-cols-4 lg:grid-cols-6"
+                  className="grid gap-6 grid-cols-2 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-6"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ staggerChildren: 0.1 }}
@@ -520,7 +573,7 @@ export default function ComparisonPage() {
               SECTION 2: Sales vs Expense vs Profit + Sales Share
               ───────────────────────────────────────────────────────── */}
           <motion.div
-            className="grid gap-6 lg:grid-cols-2"
+            className="grid gap-6 md:grid-cols-2 lg:grid-cols-2"
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -558,7 +611,7 @@ export default function ComparisonPage() {
               SECTION 3: Margin & Growth + Monthly Trend
               ───────────────────────────────────────────────────────── */}
           <motion.div
-            className="grid gap-6 lg:grid-cols-2"
+            className="grid gap-6 md:grid-cols-2 lg:grid-cols-2"
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -596,7 +649,7 @@ export default function ComparisonPage() {
               SECTION 4: Inventory Health
               ───────────────────────────────────────────────────────── */}
           <motion.div
-            className="grid gap-6 lg:grid-cols-2"
+            className="grid gap-6 md:grid-cols-2 lg:grid-cols-2"
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
@@ -634,7 +687,7 @@ export default function ComparisonPage() {
               SECTION 5: Customer Metrics + Top Products
               ───────────────────────────────────────────────────────── */}
           <motion.div
-            className="grid gap-6 lg:grid-cols-2"
+            className="grid gap-6 md:grid-cols-2 lg:grid-cols-2"
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             transition={{ duration: 0.5 }}

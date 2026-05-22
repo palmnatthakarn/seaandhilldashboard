@@ -441,7 +441,7 @@ export default function AccountingPage() {
       </ErrorBoundary>
 
       {/* Balance Sheet & Cash Flow */}
-      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
         <ErrorBoundary>
           <DataCard
             title="งบดุล"
@@ -480,7 +480,7 @@ export default function AccountingPage() {
       </motion.div>
 
       {/* AR & AP Aging */}
-      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+      <motion.div variants={itemVariants} className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-2">
         <ErrorBoundary>
           <DataCard
             title="อายุลูกหนี้ (AR Aging)"
@@ -530,7 +530,7 @@ export default function AccountingPage() {
           }}
         >
           {loading ? (
-            <div key="skeleton" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div key="skeleton" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
               <ChartSkeleton height="300px" />
               <ChartSkeleton height="300px" />
             </div>

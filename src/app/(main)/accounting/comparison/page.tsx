@@ -6,29 +6,18 @@ import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
 import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { SimpleKPICard, KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { KPIGrid } from '@/components/comparison/SimpleKPICard';
 import {
   Wallet, CreditCard, PiggyBank, TrendingUp, TrendingDown,
-  BarChart3, Minus, Trophy, Award, Medal, Building2,
-  ArrowUpRight, ArrowDownRight, DollarSign,
-  Scale, Receipt, Clock, Users, FileText, Layers,
+  BarChart3, Trophy, Award, Medal, Building2,
+  DollarSign, Scale, Receipt, Clock, Users, FileText, Layers,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
+import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
 import type {
-  DateRange, AccountingKPIs, ProfitLossData,
+  AccountingKPIs, ProfitLossData,
   BalanceSheetItem, CashFlowData, AgingItem, CategoryBreakdown,
 } from '@/lib/data/types';
-
-/* ─── Branch color palette ─── */
-const BRANCH_PALETTE = [
-  { gradient: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-50', text: 'text-indigo-700', hex: '#6366f1', light: 'bg-indigo-500' },
-  { gradient: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50', text: 'text-emerald-700', hex: '#10b981', light: 'bg-emerald-500' },
-  { gradient: 'from-amber-500 to-amber-600', bg: 'bg-amber-50', text: 'text-amber-700', hex: '#f59e0b', light: 'bg-amber-500' },
-  { gradient: 'from-rose-500 to-rose-600', bg: 'bg-rose-50', text: 'text-rose-700', hex: '#ef4444', light: 'bg-rose-500' },
-  { gradient: 'from-cyan-500 to-cyan-600', bg: 'bg-cyan-50', text: 'text-cyan-700', hex: '#06b6d4', light: 'bg-cyan-500' },
-  { gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50', text: 'text-violet-700', hex: '#8b5cf6', light: 'bg-violet-500' },
-];
 
 /* ─── Full branch data interface ─── */
 interface BranchAccountingData {
@@ -45,40 +34,6 @@ interface BranchAccountingData {
 }
 
 /* ═══════════════════════════════════════════════
-   Helper sub-components
-   ═══════════════════════════════════════════════ */
-
-function GrowthBadge({ value }: { value?: number }) {
-  if (value === undefined || value === null) return null;
-  const isUp = value > 0;
-  const isDown = value < 0;
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-0.5 text-[11px] font-semibold px-1.5 py-0.5 rounded-md',
-      isUp && 'bg-emerald-50 text-emerald-600',
-      isDown && 'bg-rose-50 text-rose-600',
-      !isUp && !isDown && 'bg-muted text-muted-foreground',
-    )}>
-      {isUp ? <ArrowUpRight className="w-3 h-3" /> : isDown ? <ArrowDownRight className="w-3 h-3" /> : <Minus className="w-3 h-3" />}
-      {Math.abs(value).toFixed(1)}%
-    </span>
-  );
-}
-
-function SectionHeader({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="px-6 pt-5 pb-3">
-      <h2 className="text-base font-bold text-foreground flex items-center gap-2">{icon}{title}</h2>
-      <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-    </div>
-  );
-}
-
-function BranchDot({ idx }: { idx: number }) {
-  return <div className={cn('h-2.5 w-2.5 rounded-full flex-shrink-0', BRANCH_PALETTE[idx % BRANCH_PALETTE.length].light)} />;
-}
-
-/* ═══════════════════════════════════════════════
    Main Page
    ═══════════════════════════════════════════════ */
 
@@ -86,6 +41,7 @@ export default function AccountingComparisonPage() {
   const { selectedBranches, availableBranches, isLoaded } = useComparison();
   const { dateRange, setDateRange } = useDateRangeStore();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BranchAccountingData[]>([]);
 
   // Stable key to prevent infinite re-fetch from array reference changes
@@ -95,69 +51,65 @@ export default function AccountingComparisonPage() {
   const fetchData = useCallback(async () => {
     if (!isLoaded || selectedBranches.length === 0) return;
     setLoading(true);
+    setError(null);
     try {
       const branchKeys = selectedBranches.filter((k: string) => k !== 'ALL');
 
-      // Fetch branches sequentially to avoid overwhelming the server
-      const results: BranchAccountingData[] = [];
-      for (const branchKey of branchKeys) {
-        const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+      const results = await Promise.all(
+        branchKeys.map(async (branchKey): Promise<BranchAccountingData> => {
+          const branchInfo = availableBranches.find((b: { key: string; name: string }) => b.key === branchKey);
+          const dateParams = new URLSearchParams({ start_date: dateRange.start, end_date: dateRange.end });
+          dateParams.append('branch', branchKey);
 
-        const dateParams = new URLSearchParams({ start_date: dateRange.start, end_date: dateRange.end });
-        dateParams.append('branch', branchKey);
+          try {
+            const [kpisRes, plRes, bsRes, cfRes, arRes, apRes, brkRes] = await Promise.all([
+              fetch(`/api/accounting/kpis?${dateParams}`),
+              fetch(`/api/accounting/profit-loss?${dateParams}`),
+              fetch(`/api/accounting/balance-sheet?${dateParams}`),
+              fetch(`/api/accounting/cash-flow?${dateParams}`),
+              fetch(`/api/accounting/ar-aging?${dateParams}`),
+              fetch(`/api/accounting/ap-aging?${dateParams}`),
+              fetch(`/api/accounting/revenue-expense-breakdown?${dateParams}`),
+            ]);
 
-        try {
-          const [kpisRes, plRes, bsRes, cfRes, arRes, apRes, brkRes] = await Promise.all([
-            fetch(`/api/accounting/kpis?${dateParams}`),
-            fetch(`/api/accounting/profit-loss?${dateParams}`),
-            fetch(`/api/accounting/balance-sheet?${dateParams}`),
-            fetch(`/api/accounting/cash-flow?${dateParams}`),
-            fetch(`/api/accounting/ar-aging?${dateParams}`),
-            fetch(`/api/accounting/ap-aging?${dateParams}`),
-            fetch(`/api/accounting/revenue-expense-breakdown?${dateParams}`),
-          ]);
+            const [kpisJ, plJ, bsJ, cfJ, arJ, apJ, brkJ] = await Promise.all([
+              kpisRes.ok ? kpisRes.json() : { data: null },
+              plRes.ok ? plRes.json() : { data: [] },
+              bsRes.ok ? bsRes.json() : { data: [] },
+              cfRes.ok ? cfRes.json() : { data: [] },
+              arRes.ok ? arRes.json() : { data: [] },
+              apRes.ok ? apRes.json() : { data: [] },
+              brkRes.ok ? brkRes.json() : { data: { revenue: [], expenses: [] } },
+            ]);
 
-          const [kpisJ, plJ, bsJ, cfJ, arJ, apJ, brkJ] = await Promise.all([
-            kpisRes.ok ? kpisRes.json() : { data: null },
-            plRes.ok ? plRes.json() : { data: [] },
-            bsRes.ok ? bsRes.json() : { data: [] },
-            cfRes.ok ? cfRes.json() : { data: [] },
-            arRes.ok ? arRes.json() : { data: [] },
-            apRes.ok ? apRes.json() : { data: [] },
-            brkRes.ok ? brkRes.json() : { data: { revenue: [], expenses: [] } },
-          ]);
-
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis: kpisJ.data,
-            profitLoss: plJ.data || [],
-            balanceSheet: bsJ.data || [],
-            cashFlow: cfJ.data || [],
-            arAging: arJ.data || [],
-            apAging: apJ.data || [],
-            revenueBreakdown: brkJ.data?.revenue || [],
-            expenseBreakdown: brkJ.data?.expenses || [],
-          });
-        } catch (branchErr) {
-          console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
-          results.push({
-            branchKey,
-            branchName: branchInfo?.name || `กิจการ ${branchKey}`,
-            kpis: null,
-            profitLoss: [],
-            balanceSheet: [],
-            cashFlow: [],
-            arAging: [],
-            apAging: [],
-            revenueBreakdown: [],
-            expenseBreakdown: [],
-          });
-        }
-      }
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis: kpisJ.data,
+              profitLoss: plJ.data || [],
+              balanceSheet: bsJ.data || [],
+              cashFlow: cfJ.data || [],
+              arAging: arJ.data || [],
+              apAging: apJ.data || [],
+              revenueBreakdown: brkJ.data?.revenue || [],
+              expenseBreakdown: brkJ.data?.expenses || [],
+            };
+          } catch (branchErr) {
+            console.warn(`Failed to fetch data for branch ${branchKey}:`, branchErr);
+            return {
+              branchKey,
+              branchName: branchInfo?.name || `กิจการ ${branchKey}`,
+              kpis: null,
+              profitLoss: [], balanceSheet: [], cashFlow: [],
+              arAging: [], apAging: [], revenueBreakdown: [], expenseBreakdown: [],
+            };
+          }
+        })
+      );
       setData(results);
     } catch (err) {
       console.error('Error fetching accounting comparison:', err);
+      setError('ไม่สามารถโหลดข้อมูลได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง');
     } finally {
       setLoading(false);
     }
@@ -165,27 +117,6 @@ export default function AccountingComparisonPage() {
 
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  /* ─── Formatting ─── */
-  const fmt = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return `฿${v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    })}`;
-  };
-  const fmtShort = (v: number) => {
-    if (Math.abs(v) >= 1_000_000) return `฿${(v / 1_000_000).toFixed(2)}M`;
-    if (Math.abs(v) >= 1_000) return `฿${(v / 1_000).toFixed(1)}K`;
-    return `฿${v.toFixed(0)}`;
-  };
-  const fmtNum = (v: number) => {
-    const hasDecimals = v % 1 !== 0;
-    return v.toLocaleString('th-TH', { 
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2 
-    });
-  };
 
   /* ─── Computed: totals ─── */
   const totals = useMemo(() => {
@@ -207,8 +138,6 @@ export default function AccountingComparisonPage() {
       const pB = (b.kpis?.revenue?.value || 0) - (b.kpis?.expenses?.value || 0);
       return pB - pA;
     }), [data]);
-
-  const maxRevenue = useMemo(() => Math.max(...data.map(d => d.kpis?.revenue?.value || 0), 1), [data]);
 
   /* ─── Aging bucket helpers ─── */
   const AGING_BUCKETS = ['ยังไม่ครบกำหนด', '1-30 วัน', '31-60 วัน', '61-90 วัน', '91-120 วัน', 'มากกว่า 120 วัน'];
@@ -307,6 +236,17 @@ export default function AccountingComparisonPage() {
           </div>
           {[...Array(4)].map((_, i) => <div key={i} className="h-56 rounded-2xl bg-muted/20 animate-pulse" />)}
         </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="h-16 w-16 rounded-2xl bg-rose-50 flex items-center justify-center mb-4">
+            <Scale className="h-8 w-8 text-rose-400" />
+          </div>
+          <p className="text-lg font-semibold text-foreground">เกิดข้อผิดพลาด</p>
+          <p className="text-sm text-muted-foreground mt-1">{error}</p>
+          <button onClick={fetchData} className="mt-4 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
+            ลองใหม่อีกครั้ง
+          </button>
+        </div>
       ) : data.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="h-16 w-16 rounded-2xl bg-muted/30 flex items-center justify-center mb-4">
@@ -386,7 +326,7 @@ export default function AccountingComparisonPage() {
             </div>
           </motion.div>
 
-          <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
             {/* ════════════════════════════════════════
              2) รายได้ vs ค่าใช้จ่าย (Grouped Bar)
              ════════════════════════════════════════ */}
@@ -420,7 +360,7 @@ export default function AccountingComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                      valueFormatter: (v: number) => fmtShort(v),
+                      valueFormatter: (v: number) => fmt(v),
                     },
                     legend: { bottom: 0, textStyle: { color: '#64748b', fontSize: 11 }, itemWidth: 12, itemHeight: 8, itemGap: 16 },
                     grid: { top: 16, right: 16, bottom: 40, left: 16, containLabel: true },
@@ -521,7 +461,7 @@ export default function AccountingComparisonPage() {
                     borderColor: '#e2e8f0',
                     textStyle: { color: '#1e293b', fontSize: 12 },
                     extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                    valueFormatter: (v: number) => fmtShort(v),
+                    valueFormatter: (v: number) => fmt(v),
                   },
                   legend: { bottom: 0, textStyle: { color: '#64748b', fontSize: 11 }, itemWidth: 12, itemHeight: 8, itemGap: 16 },
                   grid: { top: 16, right: 16, bottom: 40, left: 16, containLabel: true },

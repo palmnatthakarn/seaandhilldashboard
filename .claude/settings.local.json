@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(ls -la \"/d/Dashboard/New folder/seaandhilldashboard\" 2>/dev/null || ls -la \"$\\(cd /d/Dashboard && pwd\\)/*seaandhill*\" 2>/dev/null | head -50)",
-      "Read(//d/Dashboard/**)"
+      "Read(//d/Dashboard/**)",
+      "Bash(Get-ChildItem -Path \"d:\\\\Dashboard\\\\New folder\\\\seaandhilldashboard\\\\src\" -Recurse -Filter \"*.tsx\")",
+      "Bash(Select-Object -ExpandProperty FullName)"
     ]
   }
 }
