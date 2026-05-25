@@ -275,13 +275,13 @@ export default function AccountingPage() {
 
       {/* KPI Cards */}
       {loading ? (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           {[...Array(5)].map((_, i) => (
             <KPICardSkeleton key={i} />
           ))}
         </div>
       ) : kpis ? (
-        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
           <KPICard
             title="สินทรัพย์"
             value={formatCurrency(kpis.assets.value)}

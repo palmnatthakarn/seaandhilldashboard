@@ -160,13 +160,13 @@ export default function InventoryPage() {
 
       {/* KPI Cards */}
       {loading ? (
-        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <KPICardSkeleton key={i} />
           ))}
         </motion.div>
       ) : kpis ? (
-        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <motion.div variants={itemVariants} className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
           <KPICard
             title="มูลค่าสินค้าคงคลัง"
             value={formatCurrency(kpis.totalInventoryValue.value)}

@@ -114,13 +114,13 @@ export default function ChatWidget() {
     <>
       {/* Floating Action Button */}
       {!isOpen && (
-        <div className="fixed bottom-6 right-6 z-50">
+        <div className="fixed bottom-4 right-4 z-50 md:bottom-5 md:right-5 xl:bottom-6 xl:right-6">
           <button
             onClick={() => setIsOpen(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg transition-all duration-200 hover:scale-110 relative"
+            className="relative rounded-full bg-blue-600 p-3 text-white shadow-lg transition-all duration-200 hover:scale-105 hover:bg-blue-700 xl:p-4"
             aria-label="Open AI Assistant"
           >
-            <MessageCircle className="w-6 h-6" />
+            <MessageCircle className="h-5 w-5 xl:h-6 xl:w-6" />
 
             {/* Message count badge */}
             {messages.length > 0 && (
@@ -134,7 +134,7 @@ export default function ChatWidget() {
 
       {/* Chat Window */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 w-96 h-[600px] bg-white dark:bg-gray-800 rounded-lg shadow-2xl flex flex-col z-50 border border-gray-200 dark:border-gray-700">
+        <div className="fixed bottom-4 right-4 z-50 flex h-[min(600px,calc(100vh-2rem))] w-[min(24rem,calc(100vw-2rem))] flex-col rounded-lg border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800 md:bottom-5 md:right-5 xl:bottom-6 xl:right-6">
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 bg-blue-600 text-white rounded-t-lg">
             <div className="flex items-center gap-2">

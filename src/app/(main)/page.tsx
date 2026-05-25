@@ -398,7 +398,7 @@ export default function Dashboard() {
       )}
 
       {/* KPI Grid */}
-      <motion.div variants={itemVariants} className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      <motion.div variants={itemVariants} className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         <KPICard
           title="ยอดขายรวม"
           value={`฿${data?.totalSales?.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 0}`}

@@ -233,13 +233,13 @@ export default function SalesPage() {
       {/* KPI Cards */}
       <PermissionGuard componentKey="sales.kpis">
         {loading ? (
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
             {[...Array(4)].map((_, i) => (
               <KPICardSkeleton key={i} />
             ))}
           </div>
         ) : kpis ? (
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4">
             <KPICard
               title="ยอดขายรวม"
               value={formatCurrency(kpis.totalSales.value)}

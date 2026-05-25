@@ -273,14 +273,14 @@ export function KPICard({
                     )}
                 </div>
 
-                <div className="mt-4">
-                    <h3 className="text-sm font-medium text-[hsl(var(--muted-foreground))]">{title}</h3>
-                    <div className="mt-1 flex items-baseline gap-2">
-                        <span className="text-2xl font-bold tracking-tight text-[hsl(var(--foreground))]">
+                <div className="mt-4 min-w-0">
+                    <h3 className="truncate text-sm font-medium text-[hsl(var(--muted-foreground))]" title={title}>{title}</h3>
+                    <div className="mt-1 flex min-w-0 items-baseline gap-2">
+                        <span className="min-w-0 max-w-full truncate text-xl font-bold tracking-tight text-[hsl(var(--foreground))] xl:text-2xl" title={String(value)}>
                             {value}
                         </span>
                         {subtitle && (
-                            <span className="text-sm text-[hsl(var(--muted-foreground))]">
+                            <span className="shrink-0 text-sm text-[hsl(var(--muted-foreground))]">
                                 {subtitle}
                             </span>
                         )}

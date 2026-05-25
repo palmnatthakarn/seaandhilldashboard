@@ -147,7 +147,7 @@ export function BranchSwitcher() {
                 ) : (
                     <Building2 className="h-4 w-4" />
                 )}
-                <span className="hidden sm:inline">{getDisplayText()}</span>
+                <span className="hidden max-w-44 truncate lg:inline" title={getDisplayText()}>{getDisplayText()}</span>
             </button>
 
             {/* Modal */}

@@ -18,7 +18,8 @@ import {
     FileText,
     TrendingUp,
     BarChart3,
-    ClipboardList
+    ClipboardList,
+    X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSidebar } from '@/lib/SidebarContext';
@@ -192,6 +193,14 @@ export function Sidebar() {
                         </span>
                     )}
                 </div>
+                <button
+                    type="button"
+                    onClick={closeMobileSidebar}
+                    className="rounded-lg p-2 text-[hsl(var(--muted-foreground))] transition-colors hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--foreground))] xl:hidden"
+                    aria-label="ปิดเมนู"
+                >
+                    <X className="h-5 w-5" />
+                </button>
             </div>
 
             {/* Toggle Button — desktop only */}

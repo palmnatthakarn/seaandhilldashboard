@@ -115,7 +115,7 @@ export function Header() {
                 <button
                     onClick={handleToggleComparison}
                     className={cn(
-                        "inline-flex items-center gap-2 h-9 px-2 lg:px-4 rounded-lg border text-sm font-medium transition-colors",
+                        "inline-flex items-center gap-2 h-9 px-2 xl:px-4 rounded-lg border text-sm font-medium transition-colors",
                         (isComparisonView || (isReportsPage && isComparisonMode))
                             ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
                             : "border-[hsl(var(--border))] bg-[hsl(var(--background))] hover:bg-[hsl(var(--accent))] hover:text-[hsl(var(--accent-foreground))]"
@@ -124,12 +124,12 @@ export function Header() {
                     {(isComparisonView || (isReportsPage && isComparisonMode)) ? (
                         <>
                             <LayoutDashboard className="h-4 w-4" />
-                            <span className="hidden lg:inline">ภาพรวม</span>
+                            <span className="hidden xl:inline">ภาพรวม</span>
                         </>
                     ) : (
                         <>
                             <BarChart3 className="h-4 w-4" />
-                            <span className="hidden lg:inline">เปรียบเทียบกิจการ</span>
+                            <span className="hidden xl:inline">เปรียบเทียบกิจการ</span>
                         </>
                     )}
                 </button>
