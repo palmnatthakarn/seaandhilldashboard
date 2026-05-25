@@ -85,7 +85,7 @@ export function Header() {
             "h-16 border-b border-[hsl(var(--border))] bg-[hsl(var(--card))]/80 backdrop-blur-md",
             "fixed top-0 right-0 z-40 px-4 lg:px-8 flex items-center justify-between",
             "transition-all duration-300",
-            isCollapsed ? "left-0 lg:left-20" : "left-0 lg:left-72"
+            isCollapsed ? "left-0 xl:left-20" : "left-0 xl:left-72"
         )}>
             {/* Left: Hamburger (mobile) + Page Title */}
             <div className="flex items-center gap-3">
@@ -93,7 +93,7 @@ export function Header() {
                 <button
                     type="button"
                     onClick={openMobileSidebar}
-                    className="lg:hidden p-2 rounded-lg hover:bg-[hsl(var(--accent))] transition-colors"
+                    className="xl:hidden p-2 rounded-lg hover:bg-[hsl(var(--accent))] transition-colors"
                     aria-label="Open menu"
                 >
                     <Menu className="h-5 w-5" />

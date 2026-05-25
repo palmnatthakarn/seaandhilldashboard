@@ -164,18 +164,18 @@ export function Sidebar() {
             {/* Mobile overlay backdrop */}
             {isMobileSidebarOpen && (
                 <div
-                    className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+                    className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm xl:hidden"
                     onClick={closeMobileSidebar}
                 />
             )}
         <aside className={cn(
             "fixed inset-y-0 left-0 z-50 bg-[hsl(var(--card))] border-r border-[hsl(var(--border))] flex flex-col transition-all duration-300",
-            // Desktop: always visible, collapsible
-            "lg:translate-x-0",
+            // Wide desktop: always visible, collapsible
+            "xl:translate-x-0",
             // Mobile: hidden off-screen, slide in when open
-            isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+            isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full xl:translate-x-0",
             // Width: on mobile always full (w-72), on desktop collapsible
-            isCollapsed ? "lg:w-20 w-72" : "w-72"
+            isCollapsed ? "xl:w-20 w-72" : "w-72"
         )}>
             {/* Logo Section */}
             <div className="h-16 flex items-center justify-between px-4 border-b border-[hsl(var(--border))]">
@@ -197,7 +197,7 @@ export function Sidebar() {
             {/* Toggle Button — desktop only */}
             <button
                 onClick={toggleSidebar}
-                className="hidden lg:flex absolute -right-3 top-[3.25rem] h-6 w-6 rounded-full bg-[hsl(var(--primary))] text-white shadow-lg items-center justify-center hover:scale-110 transition-transform z-50"
+                className="hidden xl:flex absolute -right-3 top-[3.25rem] h-6 w-6 rounded-full bg-[hsl(var(--primary))] text-white shadow-lg items-center justify-center hover:scale-110 transition-transform z-50"
             >
                 {isCollapsed ? (
                     <ChevronRight className="h-4 w-4" />

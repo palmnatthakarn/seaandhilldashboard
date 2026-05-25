@@ -395,14 +395,21 @@ export default function SettingsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1120px] text-left text-sm">
+            <table className="w-full min-w-[720px] table-fixed text-left text-sm md:min-w-0">
+              <colgroup>
+                <col className="w-[38%]" />
+                <col className="w-[12%]" />
+                <col className="w-[15%]" />
+                <col className="w-[22%]" />
+                <col className="w-[13%]" />
+              </colgroup>
               <thead className="border-b border-[hsl(var(--border))] bg-[hsl(var(--muted))]/40 text-xs uppercase tracking-wide text-[hsl(var(--muted-foreground))]">
                 <tr>
-                  <th className="px-4 py-3">User</th>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Allowed branches</th>
-                  <th className="px-4 py-3 text-center">Action</th>
+                  <th className="px-3 py-3 lg:px-4">User</th>
+                  <th className="px-3 py-3 lg:px-4">Role</th>
+                  <th className="px-3 py-3 lg:px-4">Status</th>
+                  <th className="px-3 py-3 lg:px-4">Allowed branches</th>
+                  <th className="px-2 py-3 text-center lg:px-4">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[hsl(var(--border))]">
@@ -522,11 +529,13 @@ function BranchPicker({
   selected,
   disabled,
   onToggle,
+  className,
 }: {
   branches: BranchInfo[];
   selected: string[];
   disabled?: boolean;
   onToggle: (branchKey: string) => void;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selectedBranchNames = branches
@@ -541,7 +550,7 @@ function BranchPicker({
         : "เลือกกิจการ";
 
   return (
-    <div className="relative min-w-[260px]">
+    <div className={cn("relative min-w-[260px]", className)}>
       <button
         type="button"
         disabled={disabled}
@@ -647,9 +656,9 @@ function UserRow({
 
   return (
     <tr className={cn("align-top transition", editing && "bg-[hsl(var(--muted))]/20")}>
-      <td className="px-4 py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold", avatarClassName)}>
+      <td className="px-3 py-4 lg:px-4">
+        <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold lg:h-10 lg:w-10 lg:text-sm", avatarClassName)}>
             {getInitials(user)}
           </div>
           {editing ? (
@@ -684,7 +693,7 @@ function UserRow({
           )}
         </div>
       </td>
-      <td className="px-4 py-4">
+      <td className="px-3 py-4 lg:px-4">
         {editing ? (
           <select
             value={draft.role}
@@ -708,7 +717,7 @@ function UserRow({
           </span>
         )}
       </td>
-      <td className="px-4 py-4">
+      <td className="px-3 py-4 lg:px-4">
         {editing ? (
           <div className="inline-flex items-center gap-3 text-sm">
             <Switch
@@ -726,12 +735,13 @@ function UserRow({
           </span>
         )}
       </td>
-      <td className="px-4 py-4">
+      <td className="px-3 py-4 lg:px-4">
         {editing ? (
           <BranchPicker
             branches={branches}
             selected={isAdmin ? ["*"] : draft.allowed_branches}
             disabled={isAdmin}
+            className="min-w-0"
             onToggle={(branchKey) =>
               setDraft((current) => ({
                 ...current,
@@ -740,13 +750,13 @@ function UserRow({
             }
           />
         ) : (
-          <p className="max-w-[280px] truncate text-sm text-[hsl(var(--foreground))]" title={branchLabel}>
+          <p className="max-w-full truncate text-sm text-[hsl(var(--foreground))]" title={branchLabel}>
             {branchLabel}
           </p>
         )}
       </td>
-      <td className="px-4 py-4">
-        <div className="flex justify-end gap-2">
+      <td className="px-2 py-4 text-center lg:px-4">
+        <div className="flex justify-center gap-0.5 lg:gap-2">
           {editing ? (
             <>
               <TooltipButton label="บันทึก" disabled={saving || deleting} onClick={saveDraft} className="text-emerald-700 hover:bg-emerald-50">
@@ -798,7 +808,7 @@ function TooltipButton({
         onClick={onClick}
         aria-label={label}
         className={cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded-lg text-sm font-semibold transition hover:bg-[hsl(var(--accent))] disabled:opacity-60",
+          "inline-flex h-8 w-8 items-center justify-center rounded-lg text-sm font-semibold transition hover:bg-[hsl(var(--accent))] disabled:opacity-60 lg:h-9 lg:w-9",
           className
         )}
       >

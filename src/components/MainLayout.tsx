@@ -17,9 +17,9 @@ function MainLayoutContent({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <div className={cn(
         "min-h-screen flex flex-col transition-all duration-300",
-        // Desktop: shift right based on sidebar width
-        // Mobile: no margin (sidebar is overlay)
-        isCollapsed ? "lg:ml-20" : "lg:ml-72"
+        // Wide desktop: shift right based on sidebar width
+        // Mobile/tablet: no margin (sidebar is overlay)
+        isCollapsed ? "xl:ml-20" : "xl:ml-72"
       )}>
         <Header />
         <main className="flex-1 mt-16 p-3 sm:p-4 lg:p-8 w-full overflow-x-hidden">
