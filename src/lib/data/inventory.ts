@@ -133,7 +133,7 @@ export async function getInventoryKPIs(dateRange: DateRange, branchSync?: string
       )
     `;
 
-    // Overstock Items - items with Days on Hand > 90
+    // Non-moving items - items with stock > 0 but zero sales in period
     let overstockQuery = `
       SELECT
         count(*) as current_value
@@ -143,8 +143,7 @@ export async function getInventoryKPIs(dateRange: DateRange, branchSync?: string
           sum(qty) as total_qty,
           abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate('${dateRange.start}'))) as total_out,
           greatest(1, dateDiff('day', toDate('${dateRange.start}'), toDate('${dateRange.end}'))) as days_period,
-          total_out / days_period as avg_daily_out,
-          if(avg_daily_out > 0, total_qty / avg_daily_out, 999999) as days_on_hand
+          total_out / days_period as avg_daily_out
         FROM stock_transaction
         WHERE toDate(doc_datetime) <= toDate('${dateRange.end}')
         ${branchFilter.sql}
@@ -152,7 +151,7 @@ export async function getInventoryKPIs(dateRange: DateRange, branchSync?: string
 
     overstockQuery += `
         GROUP BY item_code
-        HAVING total_qty > 0 AND days_on_hand > 90
+        HAVING total_qty > 0 AND avg_daily_out = 0
       )
     `;
 
@@ -359,8 +358,8 @@ export async function getOverstockItems(dateRange: DateRange, branchSync?: strin
 
     query += `
       GROUP BY item_code
-      HAVING currentStock > 0 AND daysOnHand > 90
-      ORDER BY daysOnHand DESC
+      HAVING currentStock > 0 AND avgDailySales = 0
+      ORDER BY currentStock * costAvg DESC
     `;
 
     const result = await clickhouse.query({
@@ -550,6 +549,96 @@ export async function getInventoryTurnover(dateRange: DateRange, branchSync?: st
     });
   } catch (error) {
     console.error('Error fetching inventory turnover:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get ABC Analysis — classify items by sales contribution (A=top 80%, B=next 15%, C=rest)
+ * Classification is computed in TypeScript after fetching sorted sales data.
+ */
+export async function getABCAnalysis(dateRange: DateRange, branchSync?: string[]): Promise<import('./types').ABCItem[]> {
+  try {
+    const branchFilter = buildBranchFilter(branchSync);
+    const siFilter = branchFilter.sql ? branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync') : '';
+    const stFilter = branchFilter.sql || '';
+
+    const query = `
+      SELECT
+        s.itemCode,
+        s.itemName,
+        s.brandName,
+        s.categoryName,
+        s.totalSalesValue,
+        coalesce(st.qtyOnHand, 0) as qtyOnHand,
+        coalesce(st.qtyOnHand * st.costAvg, 0) as stockValue,
+        coalesce(st.avgDailySales, 0) as avgDailySales
+      FROM (
+        SELECT
+          sid.item_code as itemCode,
+          any(sid.item_name) as itemName,
+          any(sid.item_brand_name) as brandName,
+          any(sid.item_category_name) as categoryName,
+          sum(sid.sum_amount) as totalSalesValue
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND date(si.doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+          ${siFilter}
+        GROUP BY sid.item_code
+        HAVING totalSalesValue > 0
+      ) s
+      LEFT JOIN (
+        SELECT
+          item_code,
+          sum(qty) as qtyOnHand,
+          if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg,
+          abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate('${dateRange.start}'))) as totalOut,
+          greatest(1, dateDiff('day', toDate('${dateRange.start}'), toDate('${dateRange.end}'))) as daysPeriod,
+          totalOut / daysPeriod as avgDailySales
+        FROM stock_transaction
+        WHERE toDate(doc_datetime) <= toDate('${dateRange.end}')
+        ${stFilter}
+        GROUP BY item_code
+      ) st ON s.itemCode = st.item_code
+      ORDER BY s.totalSalesValue DESC
+      LIMIT 500
+    `;
+
+    const result = await clickhouse.query({
+      query,
+      query_params: branchFilter.params,
+      format: 'JSONEachRow',
+    });
+
+    const rows: any[] = await result.json();
+
+    const totalSales = rows.reduce((sum: number, r: any) => sum + (Number(r.totalSalesValue) || 0), 0);
+    if (totalSales === 0) return [];
+
+    let cumulative = 0;
+    return rows.map((r: any) => {
+      const salesValue = Number(r.totalSalesValue) || 0;
+      cumulative += salesValue;
+      const cumulativePct = (cumulative / totalSales) * 100;
+      const salesPct = (salesValue / totalSales) * 100;
+      const abcClass: 'A' | 'B' | 'C' = cumulativePct <= 80 ? 'A' : cumulativePct <= 95 ? 'B' : 'C';
+      return {
+        itemCode: r.itemCode,
+        itemName: r.itemName,
+        brandName: r.brandName || '-',
+        categoryName: r.categoryName || '-',
+        totalSalesValue: salesValue,
+        salesPct,
+        cumulativePct,
+        abcClass,
+        qtyOnHand: Number(r.qtyOnHand) || 0,
+        stockValue: Number(r.stockValue) || 0,
+        avgDailySales: Number(r.avgDailySales) || 0,
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching ABC analysis:', error);
     throw error;
   }
 }

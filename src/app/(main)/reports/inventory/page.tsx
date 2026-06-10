@@ -32,6 +32,7 @@ import type {
   SlowMovingItem,
   InventoryTurnover,
   StockByBranch,
+  ABCItem,
 } from '@/lib/data/types';
 import {
   getStockMovementQuery,
@@ -40,6 +41,7 @@ import {
   getSlowMovingItemsQuery,
   getInventoryTurnoverQuery,
   getStockByBranchQuery,
+  getABCAnalysisQuery,
 } from '@/lib/data/inventory-queries';
 
 // Report types
@@ -49,7 +51,8 @@ type ReportType =
   | 'overstock'
   | 'slow-moving'
   | 'turnover'
-  | 'by-branch';
+  | 'by-branch'
+  | 'abc-analysis';
 
 const reportOptions: ReportOption<ReportType>[] = [
   {
@@ -66,9 +69,9 @@ const reportOptions: ReportOption<ReportType>[] = [
   },
   {
     value: 'overstock',
-    label: 'สินค้าเกินคลัง',
+    label: 'สินค้าไม่เคลื่อนไหว',
     icon: AlertCircle,
-    description: 'รายการสินค้าที่เกินระดับสูงสุด',
+    description: 'รายการสินค้าที่ไม่มีการขายในช่วงเวลาที่เลือก',
   },
   {
     value: 'slow-moving',
@@ -87,6 +90,12 @@ const reportOptions: ReportOption<ReportType>[] = [
     label: 'สต็อกตามสาขา',
     icon: MapPin,
     description: 'มูลค่าสินค้าคงคลังแยกตามสาขา/คลัง',
+  },
+  {
+    value: 'abc-analysis',
+    label: 'ABC Analysis',
+    icon: RotateCw,
+    description: 'จัดอันดับสินค้าตามสัดส่วนยอดขาย (A/B/C)',
   },
 ];
 
@@ -155,6 +164,12 @@ export default function InventoryReportPage() {
           endpoint = `/api/inventory/by-branch?${params}`;
           break;
         }
+        case 'abc-analysis': {
+          const params = new URLSearchParams({ start_date: dateRange.start, end_date: dateRange.end });
+          appendBranches(params);
+          endpoint = `/api/inventory/abc-analysis?${params}`;
+          break;
+        }
       }
 
       const response = await fetch(endpoint);
@@ -173,6 +188,7 @@ export default function InventoryReportPage() {
   const slowMovingItems: SlowMovingItem[] = selectedReport === 'slow-moving' ? (reportData || []) : [];
   const inventoryTurnover: InventoryTurnover[] = selectedReport === 'turnover' ? (reportData || []) : [];
   const stockByBranch: StockByBranch[] = selectedReport === 'by-branch' ? (reportData || []) : [];
+  const abcItems: ABCItem[] = selectedReport === 'abc-analysis' ? (reportData || []) : [];
 
   const fetchReportData = () => { refetch(); };
 
@@ -483,6 +499,79 @@ export default function InventoryReportPage() {
     },
   ];
 
+  // Column definitions for ABC Analysis
+  const abcColumns: ColumnDef<ABCItem>[] = [
+    {
+      key: 'abcClass',
+      header: 'Class',
+      sortable: true,
+      align: 'center',
+      render: (item: ABCItem) => {
+        const colors: Record<string, string> = { A: 'text-green-600', B: 'text-yellow-600', C: 'text-slate-500' };
+        return <span className={`font-bold ${colors[item.abcClass]}`}>{item.abcClass}</span>;
+      },
+    },
+    {
+      key: 'itemName',
+      header: 'สินค้า',
+      sortable: true,
+      align: 'left',
+      render: (item: ABCItem) => (
+        <div>
+          <div className="font-medium">{item.itemName}</div>
+          <div className="text-xs text-muted-foreground">{item.itemCode}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'brandName',
+      header: 'แบรนด์',
+      sortable: true,
+      align: 'left',
+    },
+    {
+      key: 'categoryName',
+      header: 'หมวดหมู่',
+      sortable: true,
+      align: 'left',
+    },
+    {
+      key: 'totalSalesValue',
+      header: 'ยอดขาย',
+      sortable: true,
+      align: 'right',
+      render: (item: ABCItem) => <span className="font-medium">฿{formatCurrency(item.totalSalesValue)}</span>,
+    },
+    {
+      key: 'salesPct',
+      header: 'สัดส่วน %',
+      sortable: true,
+      align: 'right',
+      render: (item: ABCItem) => `${item.salesPct.toFixed(2)}%`,
+    },
+    {
+      key: 'cumulativePct',
+      header: 'สะสม %',
+      sortable: true,
+      align: 'right',
+      render: (item: ABCItem) => `${item.cumulativePct.toFixed(2)}%`,
+    },
+    {
+      key: 'qtyOnHand',
+      header: 'คงเหลือ',
+      sortable: true,
+      align: 'right',
+      render: (item: ABCItem) => formatNumber(item.qtyOnHand),
+    },
+    {
+      key: 'stockValue',
+      header: 'มูลค่าสต็อก',
+      sortable: true,
+      align: 'right',
+      render: (item: ABCItem) => `฿${formatCurrency(item.stockValue)}`,
+    },
+  ];
+
   // Column definitions for Stock By Branch
   const stockByBranchColumns: ColumnDef<StockByBranch>[] = [
     {
@@ -598,7 +687,7 @@ export default function InventoryReportPage() {
             data={overstockItems}
             columns={overstockColumns}
             itemsPerPage={10}
-            emptyMessage="ไม่มีสินค้าเกินคลัง"
+            emptyMessage="ไม่มีสินค้าไม่เคลื่อนไหว"
             defaultSortKey="stockValue"
             defaultSortOrder="desc"
             keyExtractor={(item: OverstockItem) => item.itemCode}
@@ -674,6 +763,33 @@ export default function InventoryReportPage() {
           />
         );
 
+      case 'abc-analysis':
+        return (
+          <PaginatedTable
+            data={abcItems}
+            columns={abcColumns}
+            itemsPerPage={15}
+            emptyMessage="ไม่มีข้อมูล ABC Analysis"
+            defaultSortKey="totalSalesValue"
+            defaultSortOrder="desc"
+            keyExtractor={(item: ABCItem) => item.itemCode}
+            showSummary={true}
+            summaryConfig={{
+              labelColSpan: 1,
+              values: {
+                totalSalesValue: (data) => {
+                  const total = data.reduce((sum, item) => sum + item.totalSalesValue, 0);
+                  return <span className="font-bold text-blue-600">฿{formatCurrency(total)}</span>;
+                },
+                stockValue: (data) => {
+                  const total = data.reduce((sum, item) => sum + item.stockValue, 0);
+                  return <span className="font-bold text-blue-600">฿{formatCurrency(total)}</span>;
+                },
+              }
+            }}
+          />
+        );
+
       default:
         return null;
     }
@@ -721,9 +837,9 @@ export default function InventoryReportPage() {
         return () => exportStyledReport({
           data: overstockItems,
           headers: { itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', qtyOnHand: 'คงเหลือ', avgDailySales: 'ยอดขาย/วัน', daysOnHand: 'จัดเก็บ (วัน)', stockValue: 'มูลค่าจม' },
-          filename: 'สินค้าเกินคลัง',
-          sheetName: 'Overstock',
-          title: 'รายงานสินค้าเกินคลัง',
+          filename: 'สินค้าไม่เคลื่อนไหว',
+          sheetName: 'Non-Moving',
+          title: 'รายงานสินค้าไม่เคลื่อนไหว',
           subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
           numberColumns: ['qtyOnHand', 'avgDailySales', 'daysOnHand'],
           currencyColumns: ['stockValue'],
@@ -785,6 +901,30 @@ export default function InventoryReportPage() {
           }
         });
 
+      case 'abc-analysis':
+        return () => exportStyledReport({
+          data: abcItems.map(item => ({
+            abcClass: item.abcClass,
+            itemCode: item.itemCode,
+            itemName: item.itemName,
+            brandName: item.brandName,
+            categoryName: item.categoryName,
+            totalSalesValue: item.totalSalesValue,
+            salesPct: parseFloat(item.salesPct.toFixed(2)),
+            cumulativePct: parseFloat(item.cumulativePct.toFixed(2)),
+            qtyOnHand: item.qtyOnHand,
+            stockValue: item.stockValue,
+          })),
+          headers: { abcClass: 'Class', itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalSalesValue: 'ยอดขาย', salesPct: 'สัดส่วน %', cumulativePct: 'สะสม %', qtyOnHand: 'คงเหลือ', stockValue: 'มูลค่าสต็อก' },
+          filename: 'ABC-Analysis',
+          sheetName: 'ABC Analysis',
+          title: 'รายงาน ABC Analysis',
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          currencyColumns: ['totalSalesValue', 'stockValue'],
+          numberColumns: ['salesPct', 'cumulativePct', 'qtyOnHand'],
+          summaryConfig: { columns: { totalSalesValue: 'sum', stockValue: 'sum' } }
+        });
+
       default:
         return undefined;
     }
@@ -829,8 +969,8 @@ export default function InventoryReportPage() {
         return () => exportStyledPdfReport({
           data: overstockItems,
           headers: { itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', qtyOnHand: 'คงเหลือ', avgDailySales: 'ยอดขาย/วัน', daysOnHand: 'จัดเก็บ (วัน)', stockValue: 'มูลค่าจม' },
-          filename: 'สินค้าเกินคลัง',
-          title: 'รายงานสินค้าเกินคลัง',
+          filename: 'สินค้าไม่เคลื่อนไหว',
+          title: 'รายงานสินค้าไม่เคลื่อนไหว',
           subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
           numberColumns: ['qtyOnHand', 'avgDailySales', 'daysOnHand'],
           currencyColumns: ['stockValue'],
@@ -887,6 +1027,29 @@ export default function InventoryReportPage() {
               inventoryValue: 'sum',
             }
           }
+        });
+
+      case 'abc-analysis':
+        return () => exportStyledPdfReport({
+          data: abcItems.map(item => ({
+            abcClass: item.abcClass,
+            itemCode: item.itemCode,
+            itemName: item.itemName,
+            brandName: item.brandName,
+            categoryName: item.categoryName,
+            totalSalesValue: item.totalSalesValue,
+            salesPct: parseFloat(item.salesPct.toFixed(2)),
+            cumulativePct: parseFloat(item.cumulativePct.toFixed(2)),
+            qtyOnHand: item.qtyOnHand,
+            stockValue: item.stockValue,
+          })),
+          headers: { abcClass: 'Class', itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalSalesValue: 'ยอดขาย', salesPct: 'สัดส่วน %', cumulativePct: 'สะสม %', qtyOnHand: 'คงเหลือ', stockValue: 'มูลค่าสต็อก' },
+          filename: 'ABC-Analysis',
+          title: 'รายงาน ABC Analysis',
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          currencyColumns: ['totalSalesValue', 'stockValue'],
+          numberColumns: ['salesPct', 'cumulativePct', 'qtyOnHand'],
+          summaryConfig: { columns: { totalSalesValue: 'sum', stockValue: 'sum' } }
         });
 
       default:
@@ -960,6 +1123,9 @@ export default function InventoryReportPage() {
             format: 'JSONEachRow'
           } : selectedReport === 'by-branch' ? {
             query: getStockByBranchQuery(dateRange),
+            format: 'JSONEachRow'
+          } : selectedReport === 'abc-analysis' ? {
+            query: getABCAnalysisQuery(dateRange),
             format: 'JSONEachRow'
           } : undefined}
           onExportExcel={getExportFunction()}

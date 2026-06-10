@@ -449,6 +449,20 @@ export interface StockByBranch {
   qtyOnHand?: number;
 }
 
+export interface ABCItem {
+  itemCode: string;
+  itemName: string;
+  brandName: string;
+  categoryName: string;
+  totalSalesValue: number;
+  salesPct: number;
+  cumulativePct: number;
+  abcClass: 'A' | 'B' | 'C';
+  qtyOnHand: number;
+  stockValue: number;
+  avgDailySales: number;
+}
+
 // ============================================
 // Permission Types
 // ============================================

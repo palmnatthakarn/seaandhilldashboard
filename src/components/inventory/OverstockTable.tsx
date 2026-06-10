@@ -15,20 +15,20 @@ type ChartOverstockItem = OverstockItem & {
   status: string;
 };
 
-// Status categories - 3 levels based on Days on Hand
+// Status categories - 3 levels based on stock value (capital tied up)
 const STATUS_CONFIG = [
-  { name: 'วิกฤติ', label: 'วิกฤติ (>365 วัน)', color: '#dc2626' },
-  { name: 'เตือน', label: 'เตือน (180-365 วัน)', color: '#eab308' },
-  { name: 'ปกติ', label: 'ปกติ (<180 วัน)', color: '#3b82f6' },
+  { name: 'วิกฤติ', label: 'วิกฤติ (>100k)', color: '#dc2626' },
+  { name: 'เตือน', label: 'เตือน (10k-100k)', color: '#eab308' },
+  { name: 'ปกติ', label: 'ปกติ (<10k)', color: '#3b82f6' },
 ];
 
 export function OverstockTable({ data, height = '300px' }: OverstockChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
 
-  const getStatus = (daysOnHand: number): string => {
-    if (daysOnHand > 365) return 'วิกฤติ';
-    if (daysOnHand >= 180) return 'เตือน';
+  const getStatus = (stockValue: number): string => {
+    if (stockValue > 100000) return 'วิกฤติ';
+    if (stockValue >= 10000) return 'เตือน';
     return 'ปกติ';
   };
 
@@ -42,7 +42,7 @@ export function OverstockTable({ data, height = '300px' }: OverstockChartProps) 
   const transformedData: ChartOverstockItem[] = data.map(item => {
     return {
       ...item,
-      status: getStatus(item.daysOnHand),
+      status: getStatus(item.stockValue),
     };
   });
 
@@ -89,7 +89,7 @@ export function OverstockTable({ data, height = '300px' }: OverstockChartProps) 
       },
       series: [
         {
-          name: 'สถานะสินค้าเกินคลัง',
+          name: 'สถานะสินค้าไม่เคลื่อนไหว',
           type: 'pie',
           radius: ['36%', '70%'],
           center: ['45%', '36%'],
@@ -288,7 +288,7 @@ export function OverstockTable({ data, height = '300px' }: OverstockChartProps) 
       {/* Chart */}
       {data.length === 0 ? (
         <div className="flex items-center justify-center shrink-0" style={{ height }}>
-          <p className="text-muted-foreground text-sm">ไม่มีสินค้าเกินคลัง</p>
+          <p className="text-muted-foreground text-sm">ไม่มีสินค้าไม่เคลื่อนไหว</p>
         </div>
       ) : (
         <div ref={chartRef} style={{ height, width: '100%' }} className="shrink-0" />

@@ -56,11 +56,14 @@ export function getOverstockCountQuery(dateRange: DateRange): string {
 FROM (
   SELECT
     item_code,
-    sum(qty) as total_qty
+    sum(qty) as currentStock,
+    abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate('${dateRange.start}'))) as totalOut,
+    greatest(1, dateDiff('day', toDate('${dateRange.start}'), toDate('${dateRange.end}'))) as daysPeriod,
+    totalOut / daysPeriod as avgDailySales
   FROM stock_transaction
-  WHERE doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+  WHERE toDate(doc_datetime) <= toDate('${dateRange.end}')
   GROUP BY item_code
-  HAVING total_qty > 1000
+  HAVING currentStock > 0 AND avgDailySales = 0
 )`;
 }
 
@@ -114,15 +117,19 @@ export function getOverstockItemsQuery(dateRange: DateRange): string {
   any(item_name) as itemName,
   any(item_category_name) as categoryName,
   any(item_brand_name) as brandName,
+  any(ic_unit_code) as unitCode,
   any(wh_name) as branchName,
   sum(qty) as currentStock,
-  1000 as maxStockLevel,
-  if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg
+  if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg,
+  abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate('${dateRange.start}'))) as totalOut,
+  greatest(1, dateDiff('day', toDate('${dateRange.start}'), toDate('${dateRange.end}'))) as daysPeriod,
+  totalOut / daysPeriod as avgDailySales,
+  if(avgDailySales > 0, currentStock / avgDailySales, 999999) as daysOnHand
 FROM stock_transaction
-WHERE doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+WHERE toDate(doc_datetime) <= toDate('${dateRange.end}')
 GROUP BY item_code
-HAVING currentStock > 1000
-ORDER BY currentStock DESC
+HAVING currentStock > 0 AND avgDailySales = 0
+ORDER BY currentStock * costAvg DESC
 LIMIT 50`;
 }
 
@@ -196,6 +203,46 @@ LEFT JOIN (
 ) sales ON stock.categoryName = sales.categoryName
 ORDER BY turnoverRatio DESC
 LIMIT 15`;
+}
+
+export function getABCAnalysisQuery(dateRange: DateRange): string {
+    return `-- ABC Analysis: จัดอันดับสินค้าตามสัดส่วนยอดขาย (A=80%, B=15%, C=5%)
+SELECT
+  s.itemCode,
+  s.itemName,
+  s.brandName,
+  s.categoryName,
+  s.totalSalesValue,
+  coalesce(st.qtyOnHand, 0) as qtyOnHand,
+  coalesce(st.qtyOnHand * st.costAvg, 0) as stockValue,
+  coalesce(st.avgDailySales, 0) as avgDailySales
+FROM (
+  SELECT
+    sid.item_code as itemCode,
+    any(sid.item_name) as itemName,
+    any(sid.item_brand_name) as brandName,
+    any(sid.item_category_name) as categoryName,
+    sum(sid.sum_amount) as totalSalesValue
+  FROM saleinvoice_transaction_detail sid
+  JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+  WHERE si.status_cancel != 'Cancel'
+    AND date(si.doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+  GROUP BY sid.item_code
+) s
+LEFT JOIN (
+  SELECT
+    item_code,
+    sum(qty) as qtyOnHand,
+    if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg,
+    abs(sumIf(qty, qty < 0 AND toDate(doc_datetime) >= toDate('${dateRange.start}'))) as totalOut,
+    greatest(1, dateDiff('day', toDate('${dateRange.start}'), toDate('${dateRange.end}'))) as daysPeriod,
+    totalOut / daysPeriod as avgDailySales
+  FROM stock_transaction
+  WHERE toDate(doc_datetime) <= toDate('${dateRange.end}')
+  GROUP BY item_code
+) st ON s.itemCode = st.item_code
+ORDER BY s.totalSalesValue DESC
+LIMIT 500`;
 }
 
 export function getStockByBranchQuery(dateRange: DateRange): string {

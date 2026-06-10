@@ -15,9 +15,10 @@ import { OverstockTable } from '@/components/inventory/OverstockTable';
 import { SlowMovingTable } from '@/components/inventory/SlowMovingTable';
 import { InventoryTurnoverChart } from '@/components/inventory/InventoryTurnoverChart';
 import { StockByBranchChart } from '@/components/inventory/StockByBranchChart';
+import { ABCAnalysisChart } from '@/components/inventory/ABCAnalysisChart';
 import { Package, AlertTriangle, AlertCircle, TrendingDown } from 'lucide-react';
 import { getDateRange } from '@/lib/dateRanges';
-import type { DateRange, InventoryKPIs, StockMovement, LowStockItem, OverstockItem, SlowMovingItem, InventoryTurnover, StockByBranch } from '@/lib/data/types';
+import type { DateRange, InventoryKPIs, StockMovement, LowStockItem, OverstockItem, SlowMovingItem, InventoryTurnover, StockByBranch, ABCItem } from '@/lib/data/types';
 import {
   getInventoryValueQuery,
   getTotalItemsQuery,
@@ -29,6 +30,7 @@ import {
   getSlowMovingItemsQuery,
   getInventoryTurnoverQuery,
   getStockByBranchQuery,
+  getABCAnalysisQuery,
 } from '@/lib/data/inventory-queries';
 
 export default function InventoryPage() {
@@ -58,6 +60,7 @@ export default function InventoryPage() {
         slowMovingRes,
         turnoverRes,
         branchRes,
+        abcRes,
       ] = await Promise.all([
         fetch(`/api/inventory/kpis?${params}`),
         fetch(`/api/inventory/stock-movement?${params}`),
@@ -66,6 +69,7 @@ export default function InventoryPage() {
         fetch(`/api/inventory/slow-moving?${params}`),
         fetch(`/api/inventory/turnover?${params}`),
         fetch(`/api/inventory/by-branch?${params}`),
+        fetch(`/api/inventory/abc-analysis?${params}`),
       ]);
 
       if (!kpisRes.ok) throw new Error('Failed to fetch KPIs');
@@ -75,8 +79,9 @@ export default function InventoryPage() {
       if (!slowMovingRes.ok) throw new Error('Failed to fetch slow moving items');
       if (!turnoverRes.ok) throw new Error('Failed to fetch inventory turnover');
       if (!branchRes.ok) throw new Error('Failed to fetch stock by branch');
+      if (!abcRes.ok) throw new Error('Failed to fetch ABC analysis');
 
-      const [kpisData, movementData, lowStockData, overstockData, slowMovingData, turnoverData, branchData] = await Promise.all([
+      const [kpisData, movementData, lowStockData, overstockData, slowMovingData, turnoverData, branchData, abcData] = await Promise.all([
         kpisRes.json(),
         movementRes.json(),
         lowStockRes.json(),
@@ -84,6 +89,7 @@ export default function InventoryPage() {
         slowMovingRes.json(),
         turnoverRes.json(),
         branchRes.json(),
+        abcRes.json(),
       ]);
 
       return {
@@ -94,6 +100,7 @@ export default function InventoryPage() {
         slowMovingItems: slowMovingData.data as SlowMovingItem[],
         inventoryTurnover: turnoverData.data as InventoryTurnover[],
         stockByBranch: branchData.data as StockByBranch[],
+        abcItems: abcData.data as ABCItem[],
       };
     }
   });
@@ -106,6 +113,7 @@ export default function InventoryPage() {
   const slowMovingItems = data?.slowMovingItems || [];
   const inventoryTurnover = data?.inventoryTurnover || [];
   const stockByBranch = data?.stockByBranch || [];
+  const abcItems = data?.abcItems || [];
 
   // Framer motion variants
   const containerVariants = {
@@ -215,13 +223,13 @@ export default function InventoryPage() {
             }}
           />
           <KPICard
-            title="สินค้าเกินคลัง"
+            title="สินค้าไม่เคลื่อนไหว"
             value={formatNumber(kpis.overstockAlerts.value)}
             icon={AlertCircle}
             trendUp={false}
             className={kpis.overstockAlerts.value > 0 ? 'border-orange-500/50' : ''}
-            detailTitle="รายละเอียดสินค้าเกินคลัง"
-            detailNote="จำนวนรายการที่เกินระดับสูงสุดและมีความเสี่ยงสต็อกค้าง"
+            detailTitle="รายละเอียดสินค้าไม่เคลื่อนไหว"
+            detailNote="จำนวนรายการที่ไม่มีการขายเลยในช่วงเวลาที่เลือก"
             detailItems={[
               { label: 'ช่วงวันที่', value: `${dateRange.start} ถึง ${dateRange.end}` },
               { label: 'ความเสี่ยง', value: kpis.overstockAlerts.value > 0 ? 'ต้นทุนจมสูงขึ้น' : 'ปกติ' },
@@ -279,8 +287,8 @@ export default function InventoryPage() {
         <ErrorBoundary>
           <DataCard
             className="h-full"
-            title="สินค้าาไม่เคลื่อนไหว"
-            description="รายการสินค้าที่ไม่ได้ขายมานานกว่า > 90 วัน (อิงสถิติช่วงเวลาที่เลือก)"
+            title="สินค้าไม่เคลื่อนไหว"
+            description="รายการสินค้าที่ไม่มีการขายเลยในช่วงเวลาที่เลือก"
             linkTo="/reports/inventory#overstock"
             queryInfo={{
               query: getOverstockItemsQuery(dateRange),
@@ -291,6 +299,27 @@ export default function InventoryPage() {
               <TableSkeleton rows={10} />
             ) : (
               <OverstockTable data={overstockItems} height="450px" />
+            )}
+          </DataCard>
+        </ErrorBoundary>
+      </motion.div>
+
+      {/* ABC Analysis */}
+      <motion.div variants={itemVariants}>
+        <ErrorBoundary>
+          <DataCard
+            title="ABC Analysis — การจัดอันดับสินค้า"
+            description="A = 80% ยอดขาย (Critical) · B = 15% (Major) · C = 5% (Minor) — อิงยอดขายช่วงเวลาที่เลือก"
+            linkTo="/reports/inventory#abc-analysis"
+            queryInfo={{
+              query: getABCAnalysisQuery(dateRange),
+              format: 'JSONEachRow',
+            }}
+          >
+            {loading ? (
+              <TableSkeleton rows={10} />
+            ) : (
+              <ABCAnalysisChart data={abcItems} />
             )}
           </DataCard>
         </ErrorBoundary>
