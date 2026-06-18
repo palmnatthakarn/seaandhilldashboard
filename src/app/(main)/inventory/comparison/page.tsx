@@ -16,6 +16,18 @@ import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, SectionHeader, 
 import { cn } from '@/lib/utils';
 import type { InventoryKPIs, TopProduct, InventoryTurnover, SlowMovingItem } from '@/lib/data/types';
 
+type TopProductLike = TopProduct & {
+  productName?: string;
+  name?: string;
+  sales?: number | string;
+  totalSalesValue?: number | string;
+};
+
+const toChartNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
 /* ─── Branch data interface ─── */
 interface BranchInventoryData {
   branchKey: string;
@@ -30,7 +42,7 @@ interface BranchInventoryData {
   slowMovingCount: number;
   avgStockDays: number;
   stockToSalesRatio: number;
-  topProducts: TopProduct[];
+  topProducts: TopProductLike[];
   aging0to30: number;
   aging31to60: number;
   aging61to90: number;
@@ -85,7 +97,7 @@ export default function InventoryComparisonPage() {
             ]);
 
             const kpis = kpisData.data as InventoryKPIs | null;
-            const topProducts = (productsData.data || []).slice(0, 5) as TopProduct[];
+            const topProducts = (productsData.data || []).slice(0, 10) as TopProductLike[];
             const turnoverItems = (turnoverJson.data || []) as InventoryTurnover[];
             const slowMovingItems = (slowMovingJson.data || []) as SlowMovingItem[];
 
@@ -251,11 +263,11 @@ export default function InventoryComparisonPage() {
   const topProductsChart = useMemo(() => {
     const products: { name: string; branch: string; sales: number; color: string }[] = [];
     data.forEach((b, i) => {
-      b.topProducts.slice(0, 3).forEach(p => {
+      b.topProducts.slice(0, 10).forEach(p => {
         products.push({
-          name: (p.itemName || '').substring(0, 20),
+          name: (p.itemName || p.productName || p.name || 'N/A').substring(0, 20),
           branch: shortName(b.branchName),
-          sales: p.totalSales || 0,
+          sales: toChartNumber(p.totalSales ?? p.totalSalesValue ?? p.sales),
           color: BRANCH_PALETTE[i % BRANCH_PALETTE.length].hex,
         });
       });
@@ -280,7 +292,7 @@ export default function InventoryComparisonPage() {
       yAxis: { type: 'category', data: top10.map(p => p.name).reverse(), axisLabel: { fontSize: 10 } },
       series: [{
         type: 'bar',
-        data: top10.reverse().map(p => ({ value: p.sales, itemStyle: { color: p.color, borderRadius: [0, 4, 4, 0] } })),
+        data: [...top10].reverse().map(p => ({ value: p.sales, itemStyle: { color: p.color, borderRadius: [0, 4, 4, 0] } })),
         barWidth: '60%',
       }],
     };

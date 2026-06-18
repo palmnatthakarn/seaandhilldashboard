@@ -439,18 +439,20 @@ export default function AccountingComparisonPage() {
                   return {
                     name: d.branchName,
                     type: 'line' as const,
-                    stack: 'total',
                     smooth: true,
                     symbol: 'circle',
-                    symbolSize: 4,
-                    showSymbol: false,
+                    symbolSize: 5,
+                    showSymbol: true,
                     lineStyle: { width: 2, color: hex },
                     itemStyle: { color: hex },
                     areaStyle: { color: { type: 'linear' as const, x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: hex + '55' }, { offset: 1, color: hex + '08' }] } },
                     emphasis: { focus: 'series' as const, showSymbol: true, symbolSize: 6 },
                     data: allMonths.map(m => {
                       const pl = d.profitLoss.find(p => p.month === m);
-                      return pl ? pl.netProfit : 0;
+                      if (!pl) return 0;
+                      const netProfit = Number(pl.netProfit);
+                      if (Number.isFinite(netProfit)) return netProfit;
+                      return (Number(pl.revenue) || 0) - (Number(pl.expenses) || 0);
                     }),
                   };
                 });

@@ -1,4 +1,6 @@
 import { clickhouse } from '../clickhouse';
+import { resolveBranchSyncName } from '../branch-names';
+import { getTopProductsByBranch } from './sales';
 
 export interface BranchComparisonData {
   branchKey: string;
@@ -118,14 +120,22 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     // 4. Get Inventory Value per Branch (as of end date)
     const inventoryQuery = `
       SELECT
-        wh_code as branch_sync,
-        sum(qty * cost) as inventoryValue
-      FROM stock_transaction
-      WHERE toDate(doc_datetime) <= toDate({currentEnd:String})
-        AND wh_code != ''
-        ${filterSql.replace(/branch_sync/g, 'wh_code')}
-      GROUP BY wh_code
-      HAVING sum(qty) > 0
+        branch_sync,
+        sum(qtyOnHand * costAvg) as inventoryValue
+      FROM (
+        SELECT
+          branch_sync,
+          item_code,
+          sum(qty) as qtyOnHand,
+          if(sum(qty) > 0, sum(qty * cost) / sum(qty), 0) as costAvg
+        FROM stock_transaction
+        WHERE toDate(doc_datetime) <= toDate({currentEnd:String})
+          AND branch_sync != ''
+          ${filterSql}
+        GROUP BY branch_sync, item_code
+        HAVING qtyOnHand > 0
+      )
+      GROUP BY branch_sync
     `;
 
 
@@ -153,23 +163,6 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       GROUP BY branch_sync
     `;
 
-    // 6. Get Top 3 Products per Branch
-    const topProductsQuery = `
-      SELECT
-        si.branch_sync,
-        sid.item_name as productName,
-        sum(sid.qty * sid.price) as sales
-      FROM saleinvoice_transaction_detail sid
-      JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
-      WHERE si.status_cancel != 'Cancel'
-        AND toDate(si.doc_datetime) >= toDate({currentStart:String})
-        AND toDate(si.doc_datetime) <= toDate({currentEnd:String})
-        AND si.branch_sync != ''
-        ${filterSql.replace(/branch_sync/g, 'si.branch_sync')}
-      GROUP BY si.branch_sync, sid.item_name
-      ORDER BY si.branch_sync ASC, sales DESC
-    `;
-
     // 7. Get 6-Month Sales Trend (for sparklines)
     const trendQuery = `
       SELECT
@@ -188,18 +181,18 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     // 8. Get Dead Stock Value (inventory with no sales in last 90 days)
     const deadStockQuery = `
       SELECT
-        stock.wh_code as branch_sync,
+        stock.branch_sync,
         sum(stock.stockValue) as deadStockValue
       FROM (
         SELECT
-          wh_code,
+          branch_sync,
           item_code,
           sum(qty * cost) as stockValue
         FROM stock_transaction
         WHERE toDate(doc_datetime) <= toDate({currentEnd:String})
-          AND wh_code != ''
-          ${filterSql.replace(/branch_sync/g, 'wh_code')}
-        GROUP BY wh_code, item_code
+          AND branch_sync != ''
+          ${filterSql}
+        GROUP BY branch_sync, item_code
         HAVING sum(qty) > 0
       ) stock
       LEFT JOIN (
@@ -210,9 +203,9 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
         JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
         WHERE si.status_cancel != 'Cancel'
           AND si.doc_datetime >= toDate({currentEnd:String}) - INTERVAL 90 DAY
-      ) sales ON stock.wh_code = sales.branch_sync AND stock.item_code = sales.item_code
+      ) sales ON stock.branch_sync = sales.branch_sync AND stock.item_code = sales.item_code
       WHERE sales.item_code IS NULL
-      GROUP BY stock.wh_code
+      GROUP BY stock.branch_sync
     `;
 
     const branchNameQuery = `
@@ -228,7 +221,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       prevSalesResult,
       inventoryResult,
       customerResult,
-      topProductsResult,
+      topProductsData,
       trendResult,
       deadStockResult,
       branchNameResult,
@@ -258,11 +251,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
         query_params: { currentStart, currentEnd, ...filterParams },
         format: 'JSONEachRow',
       }),
-      clickhouse.query({
-        query: topProductsQuery,
-        query_params: { currentStart, currentEnd, ...filterParams },
-        format: 'JSONEachRow',
-      }),
+      getTopProductsByBranch({ start: currentStart, end: currentEnd }, branchSync),
       clickhouse.query({
         query: trendQuery,
         query_params: { ...filterParams },
@@ -284,7 +273,6 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     const prevSalesData = await prevSalesResult.json();
     const inventoryData = await inventoryResult.json();
     const customerData = await customerResult.json();
-    const topProductsData = await topProductsResult.json();
     const trendData = await trendResult.json();
     const deadStockData = await deadStockResult.json();
     const branchNameRows = await branchNameResult.json() as Array<{ branch_sync: string; branch_sync_name: string }>;
@@ -292,7 +280,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     const branchNameMap: Record<string, string> = {};
     branchNameRows.forEach((row) => {
       if (row.branch_sync) {
-        branchNameMap[row.branch_sync] = row.branch_sync_name || `กิจการ ${row.branch_sync}`;
+        branchNameMap[row.branch_sync] = resolveBranchSyncName(row.branch_sync_name) || `กิจการ ${row.branch_sync}`;
       }
     });
 
@@ -315,18 +303,18 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     const deadStockMap = new Map();
     deadStockData.forEach((row: any) => deadStockMap.set(row.branch_sync, row));
 
-    // Process top products - group by branch, take top 3
+    // Process top products - group by branch, take top 10
     const topProductsMap = new Map<string, Array<{ productName: string; sales: number }>>();
     topProductsData.forEach((row: any) => {
-      const branchKey = row.branch_sync;
+      const branchKey = row.branchSync || row.branch_sync;
       if (!topProductsMap.has(branchKey)) {
         topProductsMap.set(branchKey, []);
       }
       const products = topProductsMap.get(branchKey)!;
-      if (products.length < 3) {
+      if (products.length < 10) {
         products.push({
-          productName: row.productName || 'N/A',
-          sales: Number(row.sales) || 0
+          productName: row.itemName || row.productName || 'N/A',
+          sales: Number(row.totalSales ?? row.sales) || 0
         });
       }
     });

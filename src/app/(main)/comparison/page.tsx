@@ -78,6 +78,10 @@ export default function ComparisonPage() {
   const fmtP = (v: number) => `${v.toFixed(1)}%`;
   const fmtFull = (v: number) => `฿${v.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtCount = (v: number) => Math.round(v).toLocaleString('th-TH');
+  const toChartNumber = (value: unknown) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
 
   /* ─── Computed ─── */
   const topBranch = branches[0] || null;
@@ -251,14 +255,14 @@ export default function ComparisonPage() {
           name: 'มูลค่าสต็อก',
           type: 'bar',
           stack: 'inv',
-          data: branches.map((b: BranchComparisonData) => b.inventoryValue - b.deadStockValue),
+          data: branches.map((b: BranchComparisonData) => Math.max(toChartNumber(b.inventoryValue) - toChartNumber(b.deadStockValue), 0)),
           itemStyle: { color: '#06b6d4', borderRadius: [0, 0, 0, 0] },
         },
         {
           name: 'Dead Stock',
           type: 'bar',
           stack: 'inv',
-          data: branches.map((b: BranchComparisonData) => b.deadStockValue),
+          data: branches.map((b: BranchComparisonData) => toChartNumber(b.deadStockValue)),
           itemStyle: { color: '#ef4444', borderRadius: [4, 4, 0, 0] },
         },
       ],
@@ -376,55 +380,25 @@ export default function ComparisonPage() {
     };
   }, [branches]);
 
-  /* 8. Top Products Comparison - Horizontal Grouped Bar */
-  const topProductsChart = useMemo(() => {
-    const products: { name: string; branch: string; sales: number; color: string }[] = [];
-    branches.forEach((b: BranchComparisonData, i: number) => {
-      b.topProducts.slice(0, 2).forEach((p: any) => {
-        products.push({
-          name: p.productName.substring(0, 20),
-          branch: shortName(b.branchName),
-          sales: p.sales,
-          color: BRANCH_PALETTE[i % BRANCH_PALETTE.length].hex,
-        });
-      });
-    });
-    products.sort((a, b) => b.sales - a.sales);
-    const top10 = products.slice(0, 10);
+  /* 8. Top Products Comparison - Top 10 per branch */
+  const topProductsByBranch = useMemo(() => {
+    const groups = branches.map((branch: BranchComparisonData, branchIndex: number) => ({
+      branchKey: branch.branchKey,
+      branchName: branch.branchName,
+      shortBranchName: shortName(branch.branchName),
+      color: BRANCH_PALETTE[branchIndex % BRANCH_PALETTE.length].hex,
+      products: branch.topProducts.slice(0, 10).map((product: any) => ({
+        name: product.productName || product.itemName || product.name || 'N/A',
+        sales: toChartNumber(product.sales ?? product.totalSales ?? product.totalSalesValue),
+      })),
+    }));
 
-    return {
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        formatter: (params: any) => {
-          const name = params[0]?.axisValue || '';
-          const val = params[0]?.value ?? 0;
-          return `<div style="font-weight:600;margin-bottom:4px">${name}</div><div>ยอดขาย: ${fmtFull(val)}</div>`;
-        },
-      },
-      grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
-      xAxis: { type: 'value', axisLabel: { formatter: (v: number) => `฿${fmtK(v)}` } },
-      yAxis: {
-        type: 'category',
-        data: top10.map((p: any) => p.name).reverse(),
-        axisLabel: { fontSize: 10 },
-      },
-      series: [
-        {
-          type: 'bar',
-          data: top10
-            .reverse()
-            .map((p: any) => ({
-              value: p.sales,
-              itemStyle: {
-                color: p.color,
-                borderRadius: [0, 4, 4, 0],
-              },
-            })),
-          barWidth: '60%',
-        },
-      ],
-    };
+    const maxSales = Math.max(
+      ...groups.flatMap((group) => group.products.map((product) => product.sales)),
+      1
+    );
+
+    return { groups, maxSales };
   }, [branches]);
 
   /* ═══ Render ═══ */
@@ -713,10 +687,59 @@ export default function ComparisonPage() {
               <SectionHeader
                 icon={<BarChart3 className="h-4 w-4 text-amber-600" />}
                 title="สินค้าขายดี"
-                desc="Top 10 สินค้าจากทุกกิจการ"
+                desc="Top 10 แยกตามกิจการ ใช้สเกลเดียวกันเพื่อเทียบข้ามกิจการ"
               />
-              <div className="px-4 pb-4">
-                <ReactECharts option={topProductsChart} style={{ height: 300 }} />
+              <div className="px-4 pb-4 overflow-x-auto">
+                {topProductsByBranch.groups.some((group) => group.products.length > 0) ? (
+                  <div
+                    className="grid gap-5"
+                    style={{
+                      gridTemplateColumns: `repeat(${topProductsByBranch.groups.length}, minmax(280px, 1fr))`,
+                      minWidth: `${Math.max(topProductsByBranch.groups.length, 1) * 280}px`,
+                    }}
+                  >
+                    {topProductsByBranch.groups.map((group) => (
+                      <div key={group.branchKey} className="min-w-0">
+                        <div className="mb-3 flex items-center justify-between gap-3 border-b pb-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color }} />
+                            <h3 className="truncate text-sm font-semibold text-foreground" title={group.branchName}>
+                              {group.shortBranchName}
+                            </h3>
+                          </div>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">Top {group.products.length}</span>
+                        </div>
+
+                        {group.products.length > 0 ? (
+                          <div className="space-y-2.5">
+                            {group.products.map((product, index) => (
+                              <div key={`${group.branchKey}-${product.name}-${index}`} className="space-y-1">
+                                <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 text-xs">
+                                  <span className="text-right font-medium text-muted-foreground">{index + 1}</span>
+                                  <span className="truncate text-foreground" title={product.name}>{product.name}</span>
+                                  <span className="font-medium tabular-nums text-muted-foreground">{fmtK(product.sales)}</span>
+                                </div>
+                                <div className="ml-7 h-2 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.max((product.sales / topProductsByBranch.maxSales) * 100, product.sales > 0 ? 2 : 0)}%`,
+                                      backgroundColor: group.color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดี</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดีในช่วงเวลานี้</p>
+                )}
               </div>
             </motion.div>
           </motion.div>

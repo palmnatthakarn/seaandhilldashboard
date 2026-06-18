@@ -16,6 +16,20 @@ import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, GrowthBadge, Se
 import { cn } from '@/lib/utils';
 import type { SalesKPIs, TopProduct, SalesBySalesperson, TopCustomer, ARStatus, SalesTrendData } from '@/lib/data/types';
 
+type ARStatusLike = ARStatus & {
+  total_outstanding?: number | string;
+  total_invoice_amount?: number | string;
+  total_paid?: number | string;
+};
+
+const toChartNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const getAROutstanding = (ar: ARStatusLike) => toChartNumber(ar.totalOutstanding ?? ar.total_outstanding);
+const getARInvoiceAmount = (ar: ARStatusLike) => toChartNumber(ar.totalInvoiceAmount ?? ar.total_invoice_amount);
+const getARChartAmount = (ar: ARStatusLike) => getAROutstanding(ar) || getARInvoiceAmount(ar) || toChartNumber(ar.totalPaid ?? ar.total_paid);
 
 /* ─── Full branch data interface ─── */
 interface BranchSalesData {
@@ -117,7 +131,7 @@ export default function SalesComparisonPage() {
       orders: sum(d => d.kpis?.totalOrders?.value || 0),
       customers: sum(d => d.topCustomers.length),
       avgOrder: data.length > 0 ? sum(d => d.kpis?.avgOrderValue?.value || 0) / data.length : 0,
-      arOutstanding: sum(d => d.arStatus.reduce((s, ar) => s + ar.totalOutstanding, 0)),
+      arOutstanding: sum(d => d.arStatus.reduce((s, ar) => s + getAROutstanding(ar), 0)),
     };
   }, [data]);
 
@@ -266,14 +280,20 @@ export default function SalesComparisonPage() {
 
   /* 6. AR Outstanding - Stacked Bar */
   const arChart = useMemo(() => {
-    const statusMap: Record<string, string> = {
-      'Paid': 'ชำระแล้ว',
-      'Partial': 'ชำระบางส่วน',
-      'Unpaid': 'ค้างชำระ',
-      'Overdue': 'เกินกำหนด',
+    const STATUS_COLORS: Record<string, string> = {
+      'Paid': '#10b981', 'ชำระแล้ว': '#10b981',
+      'Partial': '#f59e0b', 'ชำระบางส่วน': '#f59e0b',
+      'Unpaid': '#ef4444', 'ยังไม่ชำระ': '#ef4444', 'ค้างชำระ': '#ef4444',
+      'Overdue': '#dc2626', 'เกินกำหนด': '#dc2626',
     };
-    const allStatus = ['Paid', 'Partial', 'Unpaid', 'Overdue'];
-    const colors = ['#10b981', '#f59e0b', '#ef4444', '#dc2626'];
+    const FALLBACK_COLORS = ['#10b981', '#f59e0b', '#ef4444', '#dc2626', '#8b5cf6', '#06b6d4'];
+
+    // รวม statusPayment ที่มีจริงจากข้อมูลทุกสาขา
+    const allStatus = [...new Set(rankedData.flatMap(b => b.arStatus.map(a => a.statusPayment).filter(Boolean)))];
+
+    if (allStatus.length === 0) {
+      return { series: [] };
+    }
 
     return {
       tooltip: {
@@ -282,7 +302,7 @@ export default function SalesComparisonPage() {
         formatter: (params: any) => {
           let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
           params.forEach((p: any) => {
-            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
+            if (p.value > 0) html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
           });
           return html;
         },
@@ -292,52 +312,40 @@ export default function SalesComparisonPage() {
       xAxis: { type: 'category', data: rankedData.map(b => shortName(b.branchName)), axisLabel: { rotate: 20, fontSize: 10 } },
       yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `฿${fmtK(v)}` } },
       series: allStatus.map((status, sIdx) => ({
-        name: statusMap[status] || status,
+        name: status,
         type: 'bar',
         stack: 'ar',
         data: rankedData.map(b => {
           const ar = b.arStatus.find(a => a.statusPayment === status);
-          return ar ? ar.totalOutstanding : 0;
+          return ar ? getARChartAmount(ar) : 0;
         }),
-        itemStyle: { color: colors[sIdx], borderRadius: sIdx === allStatus.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0] },
+        itemStyle: {
+          color: STATUS_COLORS[status] || FALLBACK_COLORS[sIdx % FALLBACK_COLORS.length],
+          borderRadius: sIdx === allStatus.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0],
+        },
       })),
     };
   }, [rankedData]);
 
-  /* 7. Top Products Comparison - Horizontal Bar */
-  const topProductsChart = useMemo(() => {
-    const products: { name: string; sales: number; color: string }[] = [];
-    rankedData.forEach((b, i) => {
-      b.topProducts.slice(0, 2).forEach(p => {
-        products.push({
-          name: `${p.itemName.substring(0, 18)} (${shortName(b.branchName).substring(0, 8)})`,
-          sales: p.totalSales,
-          color: BRANCH_PALETTE[i % BRANCH_PALETTE.length].hex,
-        });
-      });
-    });
-    products.sort((a, b) => b.sales - a.sales);
-    const top10 = products.slice(0, 10);
+  /* 7. Top Products Comparison - Top 10 per branch */
+  const topProductsByBranch = useMemo(() => {
+    const groups = rankedData.map((branch, branchIndex) => ({
+      branchKey: branch.branchKey,
+      branchName: branch.branchName,
+      shortBranchName: shortName(branch.branchName),
+      color: BRANCH_PALETTE[branchIndex % BRANCH_PALETTE.length].hex,
+      products: branch.topProducts.slice(0, 10).map((product) => ({
+        name: product.itemName || 'N/A',
+        sales: toChartNumber(product.totalSales),
+      })),
+    }));
 
-    return {
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        formatter: (params: any) => {
-          const name = params[0]?.axisValue || '';
-          const val = params[0]?.value ?? 0;
-          return `<div style="font-weight:600;margin-bottom:4px;">${name}</div><div>ยอดขาย: ${fmt(val)}</div>`;
-        },
-      },
-      grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
-      xAxis: { type: 'value', axisLabel: { formatter: (v: number) => `฿${fmtK(v)}` } },
-      yAxis: { type: 'category', data: top10.map(p => p.name).reverse(), axisLabel: { fontSize: 10 } },
-      series: [{
-        type: 'bar',
-        data: top10.reverse().map(p => ({ value: p.sales, itemStyle: { color: p.color, borderRadius: [0, 4, 4, 0] } })),
-        barWidth: '60%',
-      }],
-    };
+    const maxSales = Math.max(
+      ...groups.flatMap((group) => group.products.map((product) => product.sales)),
+      1
+    );
+
+    return { groups, maxSales };
   }, [rankedData]);
 
   /* 8. Customer Metrics - Radar Chart */
@@ -603,10 +611,59 @@ export default function SalesComparisonPage() {
              7) Top Products + Customer Metrics
              ════════════════════════════════════════ */}
           <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-            <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
-              <SectionHeader icon={<Package className="h-4 w-4 text-amber-600" />} title="สินค้าขายดี Top 10" desc="สินค้าที่ขายดีจากทุกกิจการ" />
-              <div className="px-6 pb-5">
-                <ReactECharts option={topProductsChart} style={{ height: 300 }} />
+            <div className="rounded-2xl border bg-card shadow-sm overflow-hidden md:col-span-2">
+              <SectionHeader icon={<Package className="h-4 w-4 text-amber-600" />} title="สินค้าขายดี Top 10" desc="Top 10 แยกตามกิจการ ใช้สเกลเดียวกันเพื่อเทียบข้ามกิจการ" />
+              <div className="px-6 pb-5 overflow-x-auto">
+                {topProductsByBranch.groups.some((group) => group.products.length > 0) ? (
+                  <div
+                    className="grid gap-5"
+                    style={{
+                      gridTemplateColumns: `repeat(${topProductsByBranch.groups.length}, minmax(280px, 1fr))`,
+                      minWidth: `${Math.max(topProductsByBranch.groups.length, 1) * 280}px`,
+                    }}
+                  >
+                    {topProductsByBranch.groups.map((group) => (
+                      <div key={group.branchKey} className="min-w-0">
+                        <div className="mb-3 flex items-center justify-between gap-3 border-b pb-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color }} />
+                            <h3 className="truncate text-sm font-semibold text-foreground" title={group.branchName}>
+                              {group.shortBranchName}
+                            </h3>
+                          </div>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">Top {group.products.length}</span>
+                        </div>
+
+                        {group.products.length > 0 ? (
+                          <div className="space-y-2.5">
+                            {group.products.map((product, index) => (
+                              <div key={`${group.branchKey}-${product.name}-${index}`} className="space-y-1">
+                                <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 text-xs">
+                                  <span className="text-right font-medium text-muted-foreground">{index + 1}</span>
+                                  <span className="truncate text-foreground" title={product.name}>{product.name}</span>
+                                  <span className="font-medium tabular-nums text-muted-foreground">{fmtK(product.sales)}</span>
+                                </div>
+                                <div className="ml-7 h-2 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.max((product.sales / topProductsByBranch.maxSales) * 100, product.sales > 0 ? 2 : 0)}%`,
+                                      backgroundColor: group.color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดี</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดีในช่วงเวลานี้</p>
+                )}
               </div>
             </div>
 
@@ -616,15 +673,15 @@ export default function SalesComparisonPage() {
                 <ReactECharts option={customerRadarChart} style={{ height: 300, width: '100%' }} />
               </div>
             </div>
-          </motion.div>
 
-          {/* ════════════════════════════════════════
-             8) AR Status
-             ════════════════════════════════════════ */}
-          <motion.div variants={itemVariants} className="rounded-2xl border bg-card shadow-sm overflow-hidden">
-            <SectionHeader icon={<CreditCard className="h-4 w-4 text-rose-600" />} title="สถานะลูกหนี้ (AR)" desc="เปรียบเทียบสถานะการชำระเงินของลูกค้า" />
-            <div className="px-6 pb-5">
-              <ReactECharts option={arChart} style={{ height: 300 }} />
+            <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
+              <SectionHeader icon={<CreditCard className="h-4 w-4 text-rose-600" />} title="สถานะลูกหนี้ (AR)" desc="เปรียบเทียบสถานะการชำระเงินของลูกค้า" />
+              <div className="px-6 pb-5">
+                {arChart.series && arChart.series.length > 0
+                  ? <ReactECharts option={arChart} style={{ height: 300 }} />
+                  : <p className="text-xs text-muted-foreground py-8 text-center">ไม่มีข้อมูลลูกหนี้ในช่วงเวลานี้</p>
+                }
+              </div>
             </div>
           </motion.div>
 
