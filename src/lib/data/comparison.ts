@@ -1,6 +1,4 @@
 import { clickhouse } from '../clickhouse';
-import { resolveBranchSyncName } from '../branch-names';
-import { getTopProductsByBranch } from './sales';
 
 export interface BranchComparisonData {
   branchKey: string;
@@ -28,6 +26,20 @@ export interface BranchComparisonData {
 
   // Trend Data (for sparklines)
   monthlySales: Array<{ month: string; sales: number }>;
+}
+
+const BRANCH_SYNC_NAME_MAP: Record<string, string> = {
+  changsiamcompany_2569: 'บริษัท ช้าง สยาม กัมปนี จำกัด',
+  changsiamruay_2569: 'บริษัท ช้างสยามรวย จำกัด',
+  changsupthawee_2569: 'บริษัท ช้าง ทรัพย์ ทวี จำกัด',
+  chaothalayheha_2569: 'บริษัท ชาวทะเลเฮฮา จำกัด',
+  deejingjung_2569: 'บริษัท ดีจิงจัง 5665 จำกัด',
+  homhug_2569: 'บริษัท ฮอมฮัก จำกัด',
+};
+
+function resolveBranchSyncName(branchSyncName?: string): string {
+  if (!branchSyncName) return '';
+  return BRANCH_SYNC_NAME_MAP[branchSyncName] ?? branchSyncName;
 }
 
 
@@ -163,7 +175,36 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       GROUP BY branch_sync
     `;
 
-    // 7. Get 6-Month Sales Trend (for sparklines)
+    // 7. Get Top Products by Branch
+    const topProductsQuery = `
+      SELECT
+        si.branch_sync as branch_sync,
+        sid.item_name as productName,
+        sum(sid.sum_amount) as sales
+      FROM saleinvoice_transaction_detail sid
+      INNER JOIN (
+        SELECT
+          branch_sync,
+          doc_no
+        FROM saleinvoice_transaction
+        WHERE status_cancel != 'Cancel'
+          AND toDate(doc_datetime) >= toDate({currentStart:String})
+          AND toDate(doc_datetime) <= toDate({currentEnd:String})
+          AND branch_sync != ''
+          ${filterSql}
+        GROUP BY branch_sync, doc_no
+      ) si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+      WHERE sid.status_cancel != 'Cancel'
+        AND trim(sid.item_code) != ''
+        AND trim(sid.item_name) != ''
+        AND sid.qty > 0
+        AND sid.sum_amount > 0
+        AND trim(sid.unit_code) != ''
+      GROUP BY si.branch_sync, sid.item_name
+      ORDER BY si.branch_sync ASC, sales DESC
+    `;
+
+    // 8. Get 6-Month Sales Trend (for sparklines)
     const trendQuery = `
       SELECT
         branch_sync,
@@ -178,7 +219,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       ORDER BY branch_sync ASC, month ASC
     `;
 
-    // 8. Get Dead Stock Value (inventory with no sales in last 90 days)
+    // 9. Get Dead Stock Value (inventory with no sales in last 90 days)
     const deadStockQuery = `
       SELECT
         stock.branch_sync,
@@ -221,7 +262,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
       prevSalesResult,
       inventoryResult,
       customerResult,
-      topProductsData,
+      topProductsResult,
       trendResult,
       deadStockResult,
       branchNameResult,
@@ -251,7 +292,11 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
         query_params: { currentStart, currentEnd, ...filterParams },
         format: 'JSONEachRow',
       }),
-      getTopProductsByBranch({ start: currentStart, end: currentEnd }, branchSync),
+      clickhouse.query({
+        query: topProductsQuery,
+        query_params: { currentStart, currentEnd, ...filterParams },
+        format: 'JSONEachRow',
+      }),
       clickhouse.query({
         query: trendQuery,
         query_params: { ...filterParams },
@@ -273,6 +318,7 @@ export async function getBranchComparisonData(startDate?: string, endDate?: stri
     const prevSalesData = await prevSalesResult.json();
     const inventoryData = await inventoryResult.json();
     const customerData = await customerResult.json();
+    const topProductsData = await topProductsResult.json();
     const trendData = await trendResult.json();
     const deadStockData = await deadStockResult.json();
     const branchNameRows = await branchNameResult.json() as Array<{ branch_sync: string; branch_sync_name: string }>;
