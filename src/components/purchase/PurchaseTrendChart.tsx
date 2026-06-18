@@ -1,8 +1,21 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import type { PurchaseTrendData } from '@/lib/data/types';
+import { fmtCount, fmtFull } from '@/lib/formatters';
+
+type TooltipParam = {
+  axisValue?: string | number;
+  marker?: string;
+  seriesName?: string;
+  value?: string | number | Array<string | number>;
+};
+
+function getTooltipNumber(value: TooltipParam['value']): number {
+  const rawValue = Array.isArray(value) ? value[1] ?? value[0] : value;
+  return typeof rawValue === 'number' ? rawValue : Number(rawValue) || 0;
+}
 
 interface PurchaseTrendChartProps {
   data: PurchaseTrendData[];
@@ -17,7 +30,10 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
 
     const chart = echarts.init(chartRef.current);
 
-    const dates = data.map(item => item.month);
+    const dates = data.map(item => {
+      const date = new Date(item.month);
+      return date.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' });
+    });
 
     const purchaseData = data.map(item => item.totalPurchases);
     const orderData = data.map(item => item.poCount);
@@ -28,14 +44,16 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
         axisPointer: {
           type: 'cross',
         },
-        formatter: (params: any) => {
-          const date = params[0].axisValue;
+        formatter: (params) => {
+          const seriesParams = Array.isArray(params) ? params as TooltipParam[] : [params as TooltipParam];
+          const date = seriesParams[0]?.axisValue;
           let result = `<div style="font-weight: bold; margin-bottom: 8px;">${date}</div>`;
 
-          params.forEach((param: any) => {
-            const value = param.seriesName === 'ยอดซื้อ'
-              ? `฿${Number(param.value).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`
-              : `${param.value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} รายการ`;
+          seriesParams.forEach((param) => {
+            const valueNumber = getTooltipNumber(param.value);
+            const value = param.seriesName === 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­'
+              ? fmtFull(valueNumber)
+              : `${fmtCount(valueNumber)} à¸£à¸²à¸¢à¸à¸²à¸£`;
 
             result += `<div style="margin-bottom: 4px;">
               ${param.marker} ${param.seriesName}: <strong>${value}</strong>
@@ -46,7 +64,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
         },
       },
       legend: {
-        data: ['ยอดซื้อ', 'จำนวนออเดอร์'],
+        data: ['à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­', 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ'],
         top: 0,
       },
       grid: {
@@ -67,7 +85,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
       yAxis: [
         {
           type: 'value',
-          name: 'ยอดซื้อ (฿)',
+          name: 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­ (à¸¿)',
           position: 'left',
           axisLabel: {
             formatter: (value: number) => {
@@ -79,7 +97,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
         },
         {
           type: 'value',
-          name: 'จำนวนออเดอร์',
+          name: 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ',
           position: 'right',
           axisLabel: {
             formatter: '{value}',
@@ -88,7 +106,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
       ],
       series: [
         {
-          name: 'ยอดซื้อ',
+          name: 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­',
           type: 'line',
           data: purchaseData,
           smooth: true,
@@ -104,13 +122,15 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
           },
         },
         {
-          name: 'จำนวนออเดอร์',
+          name: 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ',
           type: 'bar',
           data: orderData,
           yAxisIndex: 1,
           itemStyle: {
             color: '#8b5cf6',
+            borderRadius: [4, 4, 0, 0],
           },
+          barMaxWidth: 28,
         },
       ],
     };
@@ -129,7 +149,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-muted-foreground text-sm">ไม่มีข้อมูล</p>
+        <p className="text-muted-foreground text-sm">à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸¡à¸¹à¸¥</p>
       </div>
     );
   }

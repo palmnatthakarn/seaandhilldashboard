@@ -139,12 +139,22 @@ export interface SalesTrendData {
 export interface TopProduct {
   itemCode: string;
   itemName: string;
+  unitCode: string;
   brandName: string;
   categoryName: string;
   totalQtySold: number;
   totalSales: number;
   totalProfit: number;
   profitMarginPct: number;
+}
+
+export interface TopProductByBranch {
+  itemCode: string;
+  itemName: string;
+  unitCode: string;
+  branchSync: string;
+  totalQtySold: number;
+  totalSales: number;
 }
 
 export interface SalesByBranch {
@@ -205,6 +215,13 @@ export interface SalesByCategory {
   totalSales: number;
   totalProfit: number;
   profitMarginPct: number;
+}
+
+export interface SalesByAccount {
+  accountCode: string;
+  accountName: string;
+  totalQtySold: number;
+  totalSales: number;
 }
 
 // ============================================

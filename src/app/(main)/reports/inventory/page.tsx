@@ -19,13 +19,11 @@ import {
   RotateCw,
   MapPin
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
 import { exportStyledReport } from '@/lib/exportExcel';
 import { exportStyledPdfReport } from '@/lib/exportPdf';
 import { formatCurrency, formatNumber, formatDate } from '@/lib/formatters';
 import { useReportHash } from '@/hooks/useReportHash';
 import type {
-  DateRange,
   StockMovement,
   LowStockItem,
   OverstockItem,
@@ -187,10 +185,9 @@ export default function InventoryReportPage() {
   const overstockItems: OverstockItem[] = selectedReport === 'overstock' ? (reportData || []) : [];
   const slowMovingItems: SlowMovingItem[] = selectedReport === 'slow-moving' ? (reportData || []) : [];
   const inventoryTurnover: InventoryTurnover[] = selectedReport === 'turnover' ? (reportData || []) : [];
+
   const stockByBranch: StockByBranch[] = selectedReport === 'by-branch' ? (reportData || []) : [];
   const abcItems: ABCItem[] = selectedReport === 'abc-analysis' ? (reportData || []) : [];
-
-  const fetchReportData = () => { refetch(); };
 
   // Column definitions for Stock Movement
   const stockMovementColumns: ColumnDef<StockMovement>[] = [
@@ -1089,11 +1086,13 @@ export default function InventoryReportPage() {
         </div>
 
         {/* Compact Report Type Selector */}
-        <ReportTypeSelector
-          value={selectedReport}
-          options={reportOptions}
-          onChange={(value) => setSelectedReport(value as ReportType)}
-        />
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <ReportTypeSelector
+            value={selectedReport}
+            options={reportOptions}
+            onChange={(value) => setSelectedReport(value as ReportType)}
+          />
+        </div>
       </motion.div>
 
       {/* Error Display */}

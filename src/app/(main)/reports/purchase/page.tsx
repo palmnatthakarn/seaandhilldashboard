@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useDateRangeStore } from '@/store/useDateRangeStore';
 import { motion } from 'framer-motion';
@@ -13,6 +13,8 @@ import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { PaginatedTable, type ColumnDef } from '@/components/PaginatedTable';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { ReportTypeSelector, type ReportOption } from '@/components/ReportTypeSelector';
+import { ReportPeriodFilter, filterRowsByReportPeriod, getPeriodKey, getMonthsFromDateRange } from '@/components/ReportPeriodFilter';
+import { useReportPeriodFilter } from '@/hooks/useReportPeriodFilter';
 import {
   TrendingUp,
   Users,
@@ -20,10 +22,9 @@ import {
   Tag,
   CreditCard,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
 import { exportStyledReport } from '@/lib/exportExcel';
 import { exportStyledPdfReport } from '@/lib/exportPdf';
-import { formatCurrency, formatNumber, formatDate, formatPercent, formatMonth } from '@/lib/formatters';
+import { formatCurrency, formatNumber, formatDate, formatMonth } from '@/lib/formatters';
 import { useReportHash } from '@/hooks/useReportHash';
 import type {
   DateRange,
@@ -100,13 +101,102 @@ const reportOptions: ReportOption<ReportType>[] = [
   },
 ];
 
+const periodFilterReports = new Set<ReportType>([
+  'purchase-trend',
+  'top-suppliers',
+  'ap-outstanding',
+  'expense-by-account',
+  'supplier-detail',
+]);
+
+function formatDateParam(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function clampDateRange(range: DateRange, bounds: DateRange): DateRange {
+  return {
+    start: range.start < bounds.start ? bounds.start : range.start,
+    end: range.end > bounds.end ? bounds.end : range.end,
+  };
+}
+
+function getPeriodDateRange(periodKey: string, periodType: import('@/components/ReportPeriodFilter').PeriodType, bounds: DateRange): DateRange {
+  if (!periodKey) return bounds;
+
+  if (periodType === 'yearly') {
+    return clampDateRange({ start: `${periodKey}-01-01`, end: `${periodKey}-12-31` }, bounds);
+  }
+
+  if (periodType === 'quarterly') {
+    const [year, quarterText] = periodKey.split('-Q');
+    const quarter = Number(quarterText || '1');
+    const startMonth = (quarter - 1) * 3;
+    const start = new Date(Number(year), startMonth, 1);
+    const end = new Date(Number(year), startMonth + 3, 0);
+    return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+  }
+
+  if (periodType === 'half-yearly') {
+    const [year, halfText] = periodKey.split('-H');
+    const half = Number(halfText || '1');
+    const startMonth = half === 1 ? 0 : 6;
+    const start = new Date(Number(year), startMonth, 1);
+    const end = new Date(Number(year), startMonth + 6, 0);
+    return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+  }
+
+  const [year, month] = periodKey.split('-').map(Number);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0);
+  return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+}
+
+function getReportPeriodDateRange(filter: import('@/components/ReportPeriodFilter').ReportPeriodFilterState, bounds: DateRange): DateRange {
+  if (filter.viewMode === 'normal' && filter.selectedPeriod) {
+    return getPeriodDateRange(filter.selectedPeriod, filter.periodType, bounds);
+  }
+
+  if (filter.viewMode === 'comparison' && (filter.compareA || filter.compareB)) {
+    const ranges = [filter.compareA, filter.compareB]
+      .filter(Boolean)
+      .map((period) => getPeriodDateRange(period, filter.periodType, bounds));
+    if (ranges.length === 0) return bounds;
+    return {
+      start: ranges.reduce((min, range) => (range.start < min ? range.start : min), ranges[0].start),
+      end: ranges.reduce((max, range) => (range.end > max ? range.end : max), ranges[0].end),
+    };
+  }
+
+  return bounds;
+}
+
+function getAggregateReportDateRange(selectedReport: ReportType, filter: import('@/components/ReportPeriodFilter').ReportPeriodFilterState, bounds: DateRange): DateRange {
+  if (selectedReport !== 'top-suppliers' && selectedReport !== 'ap-outstanding') return bounds;
+  return getReportPeriodDateRange(filter, bounds);
+}
+
 function PurchaseReportContent() {
   const searchParams = useSearchParams();
+  const normalizeFilterValue = (value?: string | null) => {
+    const trimmed = (value || '').trim();
+    return trimmed || 'N/A';
+  };
+  const urlAccountCode = searchParams.get('accountCode');
+  const urlCategoryCode = searchParams.get('categoryCode');
+  const urlCategoryName = searchParams.get('categoryName');
+  const urlSupplierCode = searchParams.get('supplierCode');
+
   const { dateRange, setDateRange } = useDateRangeStore();
   const [selectedReport, setSelectedReport] = useState<ReportType>('purchase-analysis');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   // Category filter for Purchase Analysis report
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  const { filter: purchaseFilter, setFilter: setPurchaseFilter } = useReportPeriodFilter();
+  const showPeriodFilter = periodFilterReports.has(selectedReport);
   // Account code filter for expense-by-account report
   const [selectedAccountCode, setSelectedAccountCode] = useState<string>(() => {
     return searchParams.get('accountCode') || '';
@@ -119,37 +209,53 @@ function PurchaseReportContent() {
   const availableBranches = useBranchStore((s) => s.availableBranches);
   const selectedBranchLabel = formatSelectedBranchNames(selectedBranches, availableBranches);
   const withBranchSubtitle = (detail: string) => `กิจการ: ${selectedBranchLabel} | ${detail}`;
+  const aggregateReportDateRange = useMemo(
+    () => getAggregateReportDateRange(selectedReport, purchaseFilter, dateRange),
+    [selectedReport, purchaseFilter, dateRange]
+  );
+  const exportDateRange = showPeriodFilter
+    ? getReportPeriodDateRange(purchaseFilter, dateRange)
+    : dateRange;
 
   // Handle URL hash for report selection
   useReportHash(reportOptions, setSelectedReport);
 
   // Effect to read accountCode from URL on load
   useEffect(() => {
-    const accountCodeFromUrl = searchParams.get('accountCode');
-    if (accountCodeFromUrl) {
-      setSelectedAccountCode(accountCodeFromUrl);
+    if (urlAccountCode) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedAccountCode(urlAccountCode);
     }
-    const supplierCodeFromUrl = searchParams.get('supplierCode');
-    if (supplierCodeFromUrl) {
-      setSelectedSupplierCode(supplierCodeFromUrl);
+    if (urlCategoryCode) {
+      setSelectedCategory(normalizeFilterValue(urlCategoryCode));
     }
-  }, [searchParams]);
+    if (urlCategoryName) {
+      setCategoryFilter(urlCategoryName);
+    }
+    if (urlSupplierCode) {
+      setSelectedSupplierCode(urlSupplierCode);
+    }
+  }, [urlAccountCode, urlCategoryCode, urlCategoryName, urlSupplierCode]);
 
   // Reset category filter when switching reports
   useEffect(() => {
-    setSelectedCategory('ALL');
-    setCategoryFilter('all');
-    if (selectedReport !== 'expense-by-account') {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedCategory(selectedReport === 'by-category' && urlCategoryCode ? normalizeFilterValue(urlCategoryCode) : 'ALL');
+    setCategoryFilter(selectedReport === 'purchase-analysis' && urlCategoryName ? urlCategoryName : 'all');
+    if (selectedReport !== 'expense-by-account' && !urlAccountCode) {
       setSelectedAccountCode('');
     }
-  }, [selectedReport]);
+  }, [selectedReport, urlAccountCode, urlCategoryCode, urlCategoryName]);
 
   const { data: reportData, isLoading: loading, error: queryError, refetch } = useQuery({
-    queryKey: ['purchaseReportData', selectedReport, dateRange, selectedBranches],
+    queryKey: ['purchaseReportData', selectedReport, dateRange, aggregateReportDateRange, selectedBranches, purchaseFilter],
     queryFn: async () => {
+      const reportDateRange = selectedReport === 'top-suppliers' || selectedReport === 'ap-outstanding'
+        ? aggregateReportDateRange
+        : dateRange;
       const params = new URLSearchParams({
-        start_date: dateRange.start,
-        end_date: dateRange.end,
+        start_date: reportDateRange.start,
+        end_date: reportDateRange.end,
       });
       if (!selectedBranches.includes('ALL')) {
         selectedBranches.forEach((b) => params.append('branch', b));
@@ -179,7 +285,7 @@ function PurchaseReportContent() {
           endpoint = `/api/purchase/expense-breakdown?${params}`;
           break;
         case 'supplier-detail':
-          endpoint = `/api/purchase/top-suppliers?${params}&limit=5000`;
+          endpoint = `/api/purchase/top-suppliers?${params}`;
           break;
       }
 
@@ -193,8 +299,30 @@ function PurchaseReportContent() {
 
   const error = queryError instanceof Error ? queryError.message : queryError ? 'เกิดข้อผิดพลาดในการโหลดข้อมูล' : null;
 
-  const purchaseAnalysis: PurchaseAnalysisData[] = selectedReport === 'purchase-analysis' ? (reportData || []) : [];
-  const trendData: PurchaseTrendData[] = selectedReport === 'purchase-trend' ? (reportData || []) : [];
+  const purchaseAnalysis = useMemo<PurchaseAnalysisData[]>(
+    () => selectedReport === 'purchase-analysis' ? (reportData || []) : [],
+    [selectedReport, reportData]
+  );
+  const trendData = useMemo<PurchaseTrendData[]>(
+    () => selectedReport === 'purchase-trend' ? (reportData || []) : [],
+    [selectedReport, reportData]
+  );
+
+  // Apply period filter to trend data
+  const periodFilteredTrend = useMemo(() => {
+    if (purchaseFilter.viewMode === 'normal' && purchaseFilter.selectedPeriod) {
+      return trendData.filter((r) => getPeriodKey(r.month.substring(0, 7), purchaseFilter.periodType) === purchaseFilter.selectedPeriod);
+    }
+    if (purchaseFilter.viewMode === 'comparison' && (purchaseFilter.compareA || purchaseFilter.compareB)) {
+      return trendData.filter((r) => {
+        const key = getPeriodKey(r.month.substring(0, 7), purchaseFilter.periodType);
+        return (purchaseFilter.compareA && key === purchaseFilter.compareA) ||
+               (purchaseFilter.compareB && key === purchaseFilter.compareB);
+      });
+    }
+    return trendData;
+  }, [trendData, purchaseFilter]);
+
   const topSuppliers: TopSupplier[] = (selectedReport === 'top-suppliers' || selectedReport === 'supplier-detail') ? (reportData || []) : [];
   const purchaseByCategory: PurchaseByCategory[] = selectedReport === 'by-category' ? (reportData || []) : [];
   const purchaseByBrand: PurchaseByBrand[] = selectedReport === 'by-brand' ? (reportData || []) : [];
@@ -246,7 +374,26 @@ function PurchaseReportContent() {
     enabled: selectedReport === 'supplier-detail' && !!selectedSupplierCode,
   });
 
-  const fetchReportData = () => { refetch(); };
+  // Available months for period filter
+  const purchaseAvailableMonths = useMemo(() => {
+    if (selectedReport === 'purchase-trend' && trendData.length > 0)
+      return Array.from(new Set(trendData.map((r) => r.month.substring(0, 7)))).filter(Boolean);
+    if (selectedReport === 'expense-by-account' && accountItems?.length)
+      return Array.from(new Set(accountItems.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
+    if (selectedReport === 'supplier-detail' && supplierDetails?.length)
+      return Array.from(new Set(supplierDetails.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
+    return getMonthsFromDateRange(dateRange.start, dateRange.end);
+  }, [selectedReport, trendData, accountItems, supplierDetails, dateRange]);
+
+  const periodFilteredAccountItems = useMemo(
+    () => filterRowsByReportPeriod(accountItems || [], (r) => r.docDate.substring(0, 7), purchaseFilter),
+    [accountItems, purchaseFilter]
+  );
+
+  const periodFilteredSupplierDetails = useMemo(
+    () => filterRowsByReportPeriod(supplierDetails || [], (r) => r.docDate.substring(0, 7), purchaseFilter),
+    [supplierDetails, purchaseFilter]
+  );
 
   // Column definitions for Purchase Analysis
   const purchaseAnalysisColumns: ColumnDef<PurchaseAnalysisData>[] = [
@@ -791,7 +938,7 @@ function PurchaseReportContent() {
   // Get unique categories from purchaseByCategory
   const uniqueCategories = Array.from(
     new Set(purchaseByCategory.map(item => JSON.stringify({ 
-      code: item.categoryCode, 
+      code: normalizeFilterValue(item.categoryCode),
       name: item.categoryName 
     })))
   ).map(str => JSON.parse(str)).sort((a, b) => sortByCustomOrder(a.name, b.name));
@@ -801,10 +948,24 @@ function PurchaseReportContent() {
     new Set(purchaseAnalysis.map(item => item.categoryName).filter(Boolean))
   ).sort(sortByCustomOrder);
 
+  useEffect(() => {
+    if (selectedReport === 'by-category' && selectedCategory !== 'ALL' && uniqueCategories.length > 0) {
+      if (!uniqueCategories.some((cat) => cat.code === selectedCategory)) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSelectedCategory('ALL');
+      }
+    }
+    if (selectedReport === 'purchase-analysis' && categoryFilter !== 'all' && uniqueAnalysisCategories.length > 0) {
+      if (!uniqueAnalysisCategories.includes(categoryFilter)) {
+        setCategoryFilter('all');
+      }
+    }
+  }, [selectedReport, selectedCategory, categoryFilter, uniqueCategories, uniqueAnalysisCategories]);
+
   // Filter purchaseByCategory by selected category
   const filteredPurchaseByCategory = selectedCategory === 'ALL' 
     ? purchaseByCategory 
-    : purchaseByCategory.filter(item => item.categoryCode === selectedCategory);
+    : purchaseByCategory.filter(item => normalizeFilterValue(item.categoryCode) === selectedCategory);
 
   // Filter purchaseAnalysis by selected category
   const filteredPurchaseAnalysis = categoryFilter === 'all'
@@ -846,7 +1007,7 @@ function PurchaseReportContent() {
       case 'purchase-trend':
         return (
           <PaginatedTable
-            data={trendData}
+            data={periodFilteredTrend}
             columns={purchaseTrendColumns}
             itemsPerPage={15}
             emptyMessage="ไม่มีข้อมูลการจัดซื้อ"
@@ -883,7 +1044,7 @@ function PurchaseReportContent() {
             columns={topSuppliersColumns}
             itemsPerPage={15}
             emptyMessage="ไม่มีข้อมูลซัพพลายเออร์"
-            defaultSortKey="totalPurchase"
+            defaultSortKey="totalPurchases"
             defaultSortOrder="desc"
             keyExtractor={(item: TopSupplier) => item.supplierCode}
             showSummary={true}
@@ -972,7 +1133,7 @@ function PurchaseReportContent() {
           <TableSkeleton rows={10} />
         ) : (
           <PaginatedTable
-            data={accountItems || []}
+            data={periodFilteredAccountItems}
             columns={accountItemsColumns}
             itemsPerPage={10}
             emptyMessage="ไม่มีข้อมูลค่าใช้จ่าย"
@@ -1066,7 +1227,7 @@ function PurchaseReportContent() {
             filename: `รายงานวิเคราะห์ยอดซื้อสินค้า_${categoryName}`,
             sheetName: 'Purchase Analysis',
             title: `รายงานวิเคราะห์ยอดซื้อสินค้า - ${categoryName}`,
-            subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['price', 'totalAmount', 'qty'],
             numberColumns: [],
             summaryConfig: {
@@ -1080,7 +1241,7 @@ function PurchaseReportContent() {
 
       case 'purchase-trend':
         return () => {
-          const dataWithAvg = trendData.map(item => ({
+          const dataWithAvg = periodFilteredTrend.map(item => ({
             ...item,
             avgPOValue: item.poCount > 0 ? item.totalPurchases / item.poCount : 0
           }));
@@ -1090,7 +1251,7 @@ function PurchaseReportContent() {
             filename: 'แนวโน้มการจัดซื้อ',
             sheetName: 'Purchase Trend',
             title: 'รายงานแนวโน้มการจัดซื้อ',
-            subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['totalPurchases', 'avgPOValue'],
             numberColumns: ['poCount'],
             summaryConfig: {
@@ -1106,17 +1267,17 @@ function PurchaseReportContent() {
       case 'top-suppliers':
         return () => exportStyledReport({
           data: topSuppliers,
-          headers: { supplierCode: 'รหัสซัพพลายเออร์', supplierName: 'ชื่อซัพพลายเออร์', orderCount: 'ใบสั่งซื้อ', totalPurchase: 'ยอดซื้อรวม', avgOrderValue: 'ยอดเฉลี่ย/ใบ', lastOrderDate: 'สั่งซื้อล่าสุด' },
+          headers: { supplierCode: 'รหัสซัพพลายเออร์', supplierName: 'ชื่อซัพพลายเออร์', poCount: 'ใบสั่งซื้อ', totalPurchases: 'ยอดซื้อรวม', avgPOValue: 'ยอดเฉลี่ย/ใบ', lastPurchaseDate: 'สั่งซื้อล่าสุด' },
           filename: 'ซัพพลายเออร์ยอดนิยม',
           sheetName: 'Top Suppliers',
           title: 'รายงานซัพพลายเออร์ยอดนิยม',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
-          numberColumns: ['orderCount'],
-          currencyColumns: ['totalPurchase', 'avgOrderValue'],
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
+          numberColumns: ['poCount'],
+          currencyColumns: ['totalPurchases', 'avgPOValue'],
           summaryConfig: {
             columns: {
-              orderCount: 'sum',
-              totalPurchase: 'sum',
+              poCount: 'sum',
+              totalPurchases: 'sum',
             }
           }
         });
@@ -1171,7 +1332,7 @@ function PurchaseReportContent() {
           filename: 'สถานะเจ้าหนี้การค้า',
           sheetName: 'AP Outstanding',
           title: 'รายงานสถานะเจ้าหนี้การค้า',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
           currencyColumns: ['totalOutstanding', 'overdueAmount'],
           numberColumns: ['docCount'],
           summaryConfig: {
@@ -1190,7 +1351,7 @@ function PurchaseReportContent() {
             : 'ทั้งหมด';
           
           return exportStyledReport({
-            data: accountItems || [],
+            data: periodFilteredAccountItems,
             headers: {
               docDate: 'วันที่',
               docNo: 'เลขที่เอกสาร',
@@ -1282,7 +1443,7 @@ function PurchaseReportContent() {
             },
             filename: `รายงานวิเคราะห์ยอดซื้อสินค้า_${categoryName}`,
             title: `รายงานวิเคราะห์ยอดซื้อสินค้า - ${categoryName}`,
-            subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['price', 'totalAmount', 'qty'],
             numberColumns: [],
             summaryConfig: {
@@ -1296,7 +1457,7 @@ function PurchaseReportContent() {
 
       case 'purchase-trend':
         return () => {
-          const dataWithAvg = trendData.map(item => ({
+          const dataWithAvg = periodFilteredTrend.map(item => ({
             ...item,
             avgPOValue: item.poCount > 0 ? item.totalPurchases / item.poCount : 0
           }));
@@ -1305,7 +1466,7 @@ function PurchaseReportContent() {
             headers: { month: 'เดือน', totalPurchases: 'ยอดจัดซื้อ', poCount: 'จำนวน PO', avgPOValue: 'ยอดเฉลี่ย/PO' },
             filename: 'แนวโน้มการจัดซื้อ',
             title: 'รายงานแนวโน้มการจัดซื้อ',
-            subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['totalPurchases', 'avgPOValue'],
             numberColumns: ['poCount'],
             summaryConfig: {
@@ -1321,16 +1482,16 @@ function PurchaseReportContent() {
       case 'top-suppliers':
         return () => exportStyledPdfReport({
           data: topSuppliers,
-          headers: { supplierCode: 'รหัสซัพพลายเออร์', supplierName: 'ชื่อซัพพลายเออร์', orderCount: 'ใบสั่งซื้อ', totalPurchase: 'ยอดซื้อรวม', avgOrderValue: 'ยอดเฉลี่ย/ใบ', lastOrderDate: 'สั่งซื้อล่าสุด' },
+          headers: { supplierCode: 'รหัสซัพพลายเออร์', supplierName: 'ชื่อซัพพลายเออร์', poCount: 'ใบสั่งซื้อ', totalPurchases: 'ยอดซื้อรวม', avgPOValue: 'ยอดเฉลี่ย/ใบ', lastPurchaseDate: 'สั่งซื้อล่าสุด' },
           filename: 'ซัพพลายเออร์ยอดนิยม',
           title: 'รายงานซัพพลายเออร์ยอดนิยม',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
-          numberColumns: ['orderCount'],
-          currencyColumns: ['totalPurchase', 'avgOrderValue'],
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
+          numberColumns: ['poCount'],
+          currencyColumns: ['totalPurchases', 'avgPOValue'],
           summaryConfig: {
             columns: {
-              orderCount: 'sum',
-              totalPurchase: 'sum',
+              poCount: 'sum',
+              totalPurchases: 'sum',
             }
           }
         });
@@ -1382,7 +1543,7 @@ function PurchaseReportContent() {
           headers: { supplierCode: 'รหัสซัพพลายเออร์', supplierName: 'ชื่อซัพพลายเออร์', docCount: 'จำนวนเอกสาร', totalOutstanding: 'ยอดค้างชำระ', overdueAmount: 'ยอดเกินกำหนด' },
           filename: 'สถานะเจ้าหนี้การค้า',
           title: 'รายงานสถานะเจ้าหนี้การค้า',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
           currencyColumns: ['totalOutstanding', 'overdueAmount'],
           numberColumns: ['docCount'],
           summaryConfig: {
@@ -1401,7 +1562,7 @@ function PurchaseReportContent() {
             : 'ทั้งหมด';
           
           return exportStyledPdfReport({
-            data: accountItems || [],
+            data: periodFilteredAccountItems,
             headers: {
               docDate: 'วันที่',
               docNo: 'เลขที่เอกสาร',
@@ -1474,7 +1635,7 @@ function PurchaseReportContent() {
   // Get unique accounts from current supplierDetails
   const uniqueSupplierAccounts = Array.from(
     new Map(
-      (supplierDetails || []).map(item => [
+      periodFilteredSupplierDetails.map(item => [
         item.accountCode,
         { code: item.accountCode, name: item.accountName }
       ])
@@ -1483,8 +1644,8 @@ function PurchaseReportContent() {
 
   // Filter supplierDetails by selected account
   const filteredSupplierDetails = (selectedReport === 'supplier-detail' && supplierAccountFilter !== 'ALL')
-    ? (supplierDetails || []).filter(item => item.accountCode === supplierAccountFilter)
-    : (supplierDetails || []);
+    ? periodFilteredSupplierDetails.filter(item => item.accountCode === supplierAccountFilter)
+    : periodFilteredSupplierDetails;
 
   // Framer motion variants
   const containerVariants = {
@@ -1517,12 +1678,22 @@ function PurchaseReportContent() {
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
 
-        {/* Compact Report Type Selector */}
-        <ReportTypeSelector
-          value={selectedReport}
-          options={reportOptions}
-          onChange={(value) => setSelectedReport(value as ReportType)}
-        />
+        {/* Compact Report Type Selector + Period Filter */}
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <ReportTypeSelector
+            value={selectedReport}
+            options={reportOptions}
+            onChange={(value) => setSelectedReport(value as ReportType)}
+          />
+          {showPeriodFilter && (
+            <ReportPeriodFilter
+              value={purchaseFilter}
+              onChange={setPurchaseFilter}
+              availableMonths={purchaseAvailableMonths}
+              className="ml-auto"
+            />
+          )}
+        </div>
       </motion.div>
 
       {/* Error Display */}
@@ -1598,7 +1769,7 @@ function PurchaseReportContent() {
                     }}
                     options={[
                       { value: 'ALL', label: 'เลือกซัพพลายเออร์...' },
-                      ...topSuppliers.map((s) => ({ value: s.supplierCode, label: `${s.supplierCode} - ${s.supplierName}` })),
+                      ...topSuppliers.map((s) => ({ value: s.supplierCode, label: s.supplierName?.trim() || s.supplierCode })),
                     ]}
                     className="w-full sm:w-[300px]"
                   />

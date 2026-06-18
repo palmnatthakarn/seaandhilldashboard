@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTopSuppliers } from '@/lib/data/purchase';
+import { getTopProductsByBranch } from '@/lib/data/sales';
 import { createCachedQuery, CacheDuration } from '@/lib/cache';
 import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
 
@@ -16,29 +16,25 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let branches = searchParams.getAll('branch');
+    const branches = searchParams.getAll('branch');
+    let normalizedBranches = branches;
     if (branches.length === 0) {
-      branches = ['ALL'];
+      normalizedBranches = ['ALL'];
     } else if (branches.length === 1 && branches[0].includes(',')) {
-      branches = branches[0].split(',');
+      normalizedBranches = branches[0].split(',');
     }
 
-    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 0;
-
     const cachedQuery = createCachedQuery(
-      () => getTopSuppliers({ start: startDate, end: endDate }, branches, limit),
-      ['purchase', 'top-suppliers', startDate, endDate, limit.toString(), ...branches],
+      () => getTopProductsByBranch({ start: startDate, end: endDate }, normalizedBranches),
+      ['sales', 'top-products-by-branch-v2-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.MEDIUM
     );
 
     const data = await cachedQuery();
 
-    return NextResponse.json({
-      success: true,
-      data,
-    });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
-    logError(error, 'GET /api/purchase/top-suppliers');
+    logError(error, 'GET /api/sales/top-products-by-branch');
     return NextResponse.json(formatErrorResponse(error), { status: getErrorStatusCode(error) });
   }
 }

@@ -26,7 +26,7 @@ export * from './purchase-queries';
  * Build branch filter SQL clause and parameters
  * Handles single branch, multiple branches, or ALL branches
  */
-function buildBranchFilter(branches?: string[]): { sql: string; params: Record<string, any> } {
+function buildBranchFilter(branches?: string[]): { sql: string; params: Record<string, unknown> } {
   if (!branches || branches.length === 0 || branches.includes('ALL')) {
     return { sql: '', params: {} };
   }
@@ -44,13 +44,6 @@ function buildBranchFilter(branches?: string[]): { sql: string; params: Record<s
   };
 }
 
-function getNextDate(dateString: string): string {
-  const [year, month, day] = dateString.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString().slice(0, 10);
-}
-
 /**
  * Build date-time range parameters for BETWEEN queries (inclusive end)
  * Returns start_date at 00:00:00 and end_date at 23:59:59
@@ -63,6 +56,29 @@ function buildDateTimeRangeParamsInclusive(dateRange: DateRange): {
     start_date: `${dateRange.start} 00:00:00`,
     end_date: `${dateRange.end} 23:59:59`,
   };
+}
+
+function buildPurchaseReturnDocsCte(
+  cteName: string,
+  startParam: string,
+  endParam: string,
+  branchFilterSql: string
+): string {
+  return `
+    ${cteName} AS (
+      SELECT
+        j.doc_no,
+        j.branch_sync,
+        sum(j.debit - j.credit) as return_amount,
+        toUInt8(1) as has_return
+      FROM journal_transaction_detail j
+      WHERE j.account_type = 'EXPENSES'
+        AND position(j.account_name, 'ส่งคืน') > 0
+        AND j.doc_datetime BETWEEN {${startParam}:String} AND {${endParam}:String}
+        ${branchFilterSql.replace(/branch_sync/g, 'j.branch_sync')}
+      GROUP BY j.doc_no, j.branch_sync
+    )
+  `;
 }
 
 // ============================================================================
@@ -79,35 +95,55 @@ export async function getPurchaseKPIs(dateRange: DateRange, branchSync?: string[
     const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
     const prevDateParams = buildDateTimeRangeParamsInclusive(previousPeriod);
 
+    const currentReturnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
+    const previousReturnDocsCte = buildPurchaseReturnDocsCte('previous_return_docs', 'previous_start', 'previous_end', branchFilter.sql);
+
     // Total Purchases
     const purchaseQuery = `
+      WITH
+      ${currentReturnDocsCte},
+      ${previousReturnDocsCte},
+      current_purchases AS (
+        SELECT
+          pt.total_amount + coalesce(r.return_amount, 0) as net_amount
+        FROM purchase_transaction pt
+        LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+        WHERE pt.status_cancel != 'Cancel'
+          AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+          ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      ),
+      previous_purchases AS (
+        SELECT
+          pt.total_amount + coalesce(r.return_amount, 0) as net_amount
+        FROM purchase_transaction pt
+        LEFT JOIN previous_return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+        WHERE pt.status_cancel != 'Cancel'
+          AND pt.doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
+          ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      )
       SELECT
-        sum(total_amount) as current_value,
-        (SELECT sum(total_amount)
-         FROM purchase_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
-        ) as previous_value
-      FROM purchase_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+        (SELECT sumIf(net_amount, abs(net_amount) > 0.01) FROM current_purchases) as current_value,
+        (SELECT sumIf(net_amount, abs(net_amount) > 0.01) FROM previous_purchases) as previous_value
     `;
 
     // Total Items Purchased
     const itemsQuery = `
+      WITH
+      ${currentReturnDocsCte},
+      ${previousReturnDocsCte}
       SELECT
-        sum(qty) as current_value,
-        (SELECT sum(qty)
+        sumIf(ptd.qty, coalesce(r.has_return, 0) = 0) as current_value,
+        (SELECT sumIf(ptd.qty, coalesce(pr.has_return, 0) = 0)
          FROM purchase_transaction_detail ptd
          JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+         LEFT JOIN previous_return_docs pr ON pt.doc_no = pr.doc_no AND pt.branch_sync = pr.branch_sync
          WHERE pt.status_cancel != 'Cancel'
            AND pt.doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
            ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
         ) as previous_value
       FROM purchase_transaction_detail ptd
       JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
       WHERE pt.status_cancel != 'Cancel'
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
         ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
@@ -115,34 +151,51 @@ export async function getPurchaseKPIs(dateRange: DateRange, branchSync?: string[
 
     // Total Orders
     const ordersQuery = `
+      WITH
+      ${currentReturnDocsCte},
+      ${previousReturnDocsCte}
       SELECT
-        count(DISTINCT doc_no, branch_sync) as current_value,
-        (SELECT count(DISTINCT doc_no, branch_sync)
-         FROM purchase_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
+        countIf(coalesce(r.has_return, 0) = 0) as current_value,
+        (SELECT countIf(coalesce(pr.has_return, 0) = 0)
+         FROM purchase_transaction pt
+         LEFT JOIN previous_return_docs pr ON pt.doc_no = pr.doc_no AND pt.branch_sync = pr.branch_sync
+         WHERE pt.status_cancel != 'Cancel'
+           AND pt.doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
+           ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
         ) as previous_value
-      FROM purchase_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+      FROM purchase_transaction pt
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
     `;
 
     // Average Order Value
     const avgOrderQuery = `
+      WITH
+      ${currentReturnDocsCte},
+      ${previousReturnDocsCte},
+      current_purchases AS (
+        SELECT
+          pt.total_amount + coalesce(r.return_amount, 0) as net_amount
+        FROM purchase_transaction pt
+        LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+        WHERE pt.status_cancel != 'Cancel'
+          AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+          ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      ),
+      previous_purchases AS (
+        SELECT
+          pt.total_amount + coalesce(r.return_amount, 0) as net_amount
+        FROM purchase_transaction pt
+        LEFT JOIN previous_return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+        WHERE pt.status_cancel != 'Cancel'
+          AND pt.doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
+          ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      )
       SELECT
-        avg(total_amount) as current_value,
-        (SELECT avg(total_amount)
-         FROM purchase_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
-        ) as previous_value
-      FROM purchase_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+        (SELECT avgIf(net_amount, abs(net_amount) > 0.01) FROM current_purchases) as current_value,
+        (SELECT avgIf(net_amount, abs(net_amount) > 0.01) FROM previous_purchases) as previous_value
     `;
 
     const params = {
@@ -165,7 +218,7 @@ export async function getPurchaseKPIs(dateRange: DateRange, branchSync?: string[
     const ordersData = await ordersResult.json();
     const avgOrderData = await avgOrderResult.json();
 
-    const createKPI = (data: any[]): KPIData => {
+    const createKPI = (data: Array<Record<string, unknown>>): KPIData => {
       const row = data[0] || { current_value: 0, previous_value: 0 };
       const current = Number(row.current_value) || 0;
       const previous = Number(row.previous_value) || 0;
@@ -221,16 +274,19 @@ export async function getPurchaseTrendData(dateRange: DateRange, branchSync?: st
     const branchFilter = buildBranchFilter(branchSync);
 
     const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
-        formatDateTime(toStartOfMonth(doc_datetime), '%Y-%m') as month,
-        sum(total_amount) as totalPurchases,
-        count(DISTINCT doc_no, branch_sync) as poCount
-      FROM purchase_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+        toDate(pt.doc_datetime + INTERVAL 7 HOUR) as month,
+        sumIf(pt.total_amount + coalesce(r.return_amount, 0), abs(pt.total_amount + coalesce(r.return_amount, 0)) > 0.01) as totalPurchases,
+        countIf(coalesce(r.has_return, 0) = 0) as poCount
+      FROM purchase_transaction pt
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
       GROUP BY month
       ORDER BY month ASC
     `;
@@ -245,7 +301,7 @@ export async function getPurchaseTrendData(dateRange: DateRange, branchSync?: st
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       month: row.month,
       totalPurchases: Number(row.totalPurchases) || 0,
       poCount: Number(row.poCount) || 0,
@@ -259,26 +315,30 @@ export async function getPurchaseTrendData(dateRange: DateRange, branchSync?: st
 /**
  * Get Top Suppliers
  */
-export async function getTopSuppliers(dateRange: DateRange, branchSync?: string[], limit: number = 20): Promise<TopSupplier[]> {
+export async function getTopSuppliers(dateRange: DateRange, branchSync?: string[], limit: number = 0): Promise<TopSupplier[]> {
   try {
     const branchFilter = buildBranchFilter(branchSync);
 
     const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
-        supplier_code as supplierCode,
-        supplier_name as supplierName,
-        count(DISTINCT doc_no, branch_sync) as poCount,
-        sum(total_amount) as totalPurchases,
-        avg(total_amount) as avgPOValue,
-        max(doc_datetime) as lastPurchaseDate
-      FROM purchase_transaction
-      WHERE status_cancel != 'Cancel'
-        AND supplier_code != ''
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+        pt.supplier_code as supplierCode,
+        pt.supplier_name as supplierName,
+        countIf(coalesce(r.has_return, 0) = 0) as poCount,
+        sumIf(pt.total_amount + coalesce(r.return_amount, 0), abs(pt.total_amount + coalesce(r.return_amount, 0)) > 0.01) as totalPurchases,
+        avgIf(pt.total_amount + coalesce(r.return_amount, 0), abs(pt.total_amount + coalesce(r.return_amount, 0)) > 0.01) as avgPOValue,
+        maxIf(pt.doc_datetime, coalesce(r.has_return, 0) = 0) as lastPurchaseDate
+      FROM purchase_transaction pt
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND pt.supplier_code != ''
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
       GROUP BY supplier_code, supplier_name
+      HAVING totalPurchases != 0
       ORDER BY totalPurchases DESC
       ${limit > 0 ? `LIMIT ${limit}` : ''}
     `;
@@ -293,7 +353,7 @@ export async function getTopSuppliers(dateRange: DateRange, branchSync?: string[
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       supplierCode: row.supplierCode,
       supplierName: row.supplierName,
       poCount: Number(row.poCount) || 0,
@@ -315,8 +375,10 @@ export async function getPurchaseByCategory(dateRange: DateRange, branchSync?: s
     const branchFilter = buildBranchFilter(branchSync);
 
     const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
         COALESCE(NULLIF(ptd.item_category_code, ''), 'N/A') as categoryCode,
         COALESCE(NULLIF(ptd.item_category_name, ''), 'ไม่ระบุหมวดหมู่') as categoryName,
@@ -327,8 +389,10 @@ export async function getPurchaseByCategory(dateRange: DateRange, branchSync?: s
         count(DISTINCT ptd.item_code) as uniqueItems
       FROM purchase_transaction_detail ptd
       JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
       WHERE pt.status_cancel != 'Cancel'
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND coalesce(r.has_return, 0) = 0
         ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
       GROUP BY categoryCode, categoryName, ptd.item_code, ptd.item_name
       ORDER BY categoryName ASC, totalPurchaseValue DESC
@@ -344,7 +408,7 @@ export async function getPurchaseByCategory(dateRange: DateRange, branchSync?: s
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       categoryCode: row.categoryCode || 'N/A',
       categoryName: row.categoryName || 'ไม่ระบุหมวดหมู่',
       itemCode: row.itemCode,
@@ -423,7 +487,7 @@ export async function getPurchaseByCategorySummary(
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       categoryCode: row.categoryCode || 'N/A',
       categoryName: row.categoryName || 'ไม่ระบุหมวดหมู่',
       itemCode: '',  // Not applicable in summary
@@ -445,8 +509,10 @@ export async function getPurchaseByCategorySummary(
 export async function getPurchaseAnalysisData(dateRange: DateRange, branchSync?: string[]): Promise<import('./types').PurchaseAnalysisData[]> {
   try {
     const branchFilter = buildBranchFilter(branchSync);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
         COALESCE(NULLIF(ptd.item_category_name, ''), 'ไม่ระบุหมวดหมู่') as categoryName,
         toDate(toTimeZone(pt.doc_datetime, 'Asia/Bangkok')) as docDate,
@@ -459,8 +525,10 @@ export async function getPurchaseAnalysisData(dateRange: DateRange, branchSync?:
         ptd.sum_amount as totalAmount
       FROM purchase_transaction_detail ptd
       JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
       WHERE pt.status_cancel != 'Cancel'
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND coalesce(r.has_return, 0) = 0
         ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
       ORDER BY categoryName, docDate, docNo
     `;
@@ -477,7 +545,7 @@ export async function getPurchaseAnalysisData(dateRange: DateRange, branchSync?:
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       categoryName: row.categoryName || 'ไม่ระบุหมวดหมู่',
       docDate: row.docDate,
       docNo: row.docNo,
@@ -500,8 +568,10 @@ export async function getPurchaseAnalysisData(dateRange: DateRange, branchSync?:
 export async function getPurchaseByBrand(dateRange: DateRange, branchSync?: string[]): Promise<PurchaseByBrand[]> {
   try {
     const branchFilter = buildBranchFilter(branchSync);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
         ptd.item_brand_code as brandCode,
         ptd.item_brand_name as brandName,
@@ -509,9 +579,11 @@ export async function getPurchaseByBrand(dateRange: DateRange, branchSync?: stri
         uniq(ptd.item_code) as uniqueItems
       FROM purchase_transaction_detail ptd
       JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
       WHERE pt.status_cancel != 'Cancel'
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
         AND ptd.item_brand_name != ''
+        AND coalesce(r.has_return, 0) = 0
         ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
       GROUP BY ptd.item_brand_code, ptd.item_brand_name
       ORDER BY totalPurchaseValue DESC
@@ -529,7 +601,7 @@ export async function getPurchaseByBrand(dateRange: DateRange, branchSync?: stri
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       brandCode: row.brandCode || '',
       brandName: row.brandName || 'ไม่ระบุ',
       totalPurchaseValue: Number(row.totalPurchaseValue) || 0,
@@ -553,18 +625,16 @@ export async function getAPOutstanding(dateRange: DateRange, branchSync?: string
       SELECT
         supplier_code as supplierCode,
         supplier_name as supplierName,
-        sum(total_amount - sum_pay_money) as totalOutstanding,
-        sum(CASE WHEN due_date < today() AND total_amount > sum_pay_money THEN total_amount - sum_pay_money ELSE 0 END) as overdueAmount,
+        sum(total_amount - \`sum_pay_money\`) as totalOutstanding,
+        sum(CASE WHEN due_date < toDate({end_date:String}) AND total_amount > \`sum_pay_money\` THEN total_amount - \`sum_pay_money\` ELSE 0 END) as overdueAmount,
         count(DISTINCT doc_no, branch_sync) as docCount
       FROM purchase_transaction
       WHERE status_cancel != 'Cancel'
-        AND doc_type = 'CREDIT'
         AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        AND total_amount > sum_pay_money
+        AND total_amount > \`sum_pay_money\`
         ${branchFilter.sql}
       GROUP BY supplier_code, supplier_name
       ORDER BY totalOutstanding DESC
-      LIMIT 20
     `;
 
     const result = await clickhouse.query({
@@ -577,7 +647,7 @@ export async function getAPOutstanding(dateRange: DateRange, branchSync?: string
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       supplierCode: row.supplierCode || '',
       supplierName: row.supplierName || 'ไม่ระบุ',
       totalOutstanding: Number(row.totalOutstanding) || 0,
@@ -659,7 +729,7 @@ ORDER BY j.account_type, totalPurchaseValue DESC`;
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       categoryCode: row.categoryCode ?? 'OTHER',
       categoryName: row.categoryName ?? 'ไม่ระบุหมวด',
       accountType: row.accountType as 'EXPENSES' | 'ASSETS' | 'LIABILITIES',
@@ -726,7 +796,7 @@ export async function getPurchaseChartOfAccounts(
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       accountCode: row.accountCode ?? '',
       accountName: row.accountName ?? '',
       accountType: row.accountType ?? '',
@@ -750,6 +820,7 @@ export async function getPurchaseItemsByAccount(
 ): Promise<import('./types').PurchaseItemsByAccount[]> {
   try {
     const branchFilter = buildBranchFilter(branchSync);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
 
     // If no specific account, get all EXPENSES accounts
     const accountFilter = accountCode && accountCode !== 'ALL'
@@ -759,6 +830,7 @@ export async function getPurchaseItemsByAccount(
     const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
 
     const query = `
+      WITH ${returnDocsCte}
       SELECT
         DATE(ptd.doc_datetime) AS docDate,
         ptd.doc_no AS docNo,
@@ -768,13 +840,14 @@ export async function getPurchaseItemsByAccount(
         COALESCE(NULLIF(ptd.item_category_name, ''), 'ไม่ระบุหมวดหมู่') AS categoryName,
         COALESCE(NULLIF(ptd.item_brand_name, ''), 'ไม่ระบุแบรนด์') AS brandName,
         ptd.unit_code AS unitCode,
-        ptd.qty AS qty,
+        if(coalesce(r.has_return, 0) = 0, ptd.qty, -ptd.qty) AS qty,
         ptd.price AS price,
-        ptd.sum_amount AS totalAmount
+        if(coalesce(r.has_return, 0) = 0, ptd.sum_amount, -ptd.sum_amount) AS totalAmount
       FROM purchase_transaction_detail ptd
       JOIN purchase_transaction pt 
         ON ptd.doc_no = pt.doc_no 
         AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
       WHERE pt.status_cancel != 'Cancel'
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
         AND ptd.doc_no IN (
@@ -788,7 +861,7 @@ export async function getPurchaseItemsByAccount(
       ORDER BY ptd.doc_datetime DESC, ptd.doc_no DESC
     `;
 
-    const queryParams: any = {
+    const queryParams: Record<string, unknown> = {
       ...dateParams,
       ...branchFilter.params
     };
@@ -804,7 +877,7 @@ export async function getPurchaseItemsByAccount(
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       docDate: row.docDate ?? '',
       docNo: row.docNo ?? '',
       itemCode: row.itemCode ?? '',
@@ -878,7 +951,7 @@ export async function getPurchaseExpenseBreakdown(
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       accountGroup: row.accountGroup ?? '',
       accountName: row.accountName ?? '',
       amount: Number(row.amount ?? 0),
@@ -945,7 +1018,7 @@ export async function getSupplierPODetails(
     });
 
     const data = await result.json();
-    return data.map((row: any) => ({
+    return data.map((row: Record<string, unknown>) => ({
       docDate: row.docDate ?? '',
       docNo: row.docNo ?? '',
       supplierCode: row.supplierCode ?? '',

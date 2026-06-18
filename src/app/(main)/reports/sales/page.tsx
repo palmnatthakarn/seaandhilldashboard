@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useDateRangeStore } from '@/store/useDateRangeStore';
 import { motion } from 'framer-motion';
@@ -13,9 +13,9 @@ import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { PaginatedTable, type ColumnDef } from '@/components/PaginatedTable';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { ReportTypeSelector, type ReportOption } from '@/components/ReportTypeSelector';
-import { ReportFilter } from '@/components/ReportFilter';
-import { UnifiedComparisonTable, type BranchInfo, type ComparisonColumnDef } from '@/components/UnifiedComparisonTable';
-import { useComparison } from '@/lib/ComparisonContext';
+import { ReportPeriodFilter, getMonthsFromDateRange, type PeriodType } from '@/components/ReportPeriodFilter';
+import { useReportPeriodFilter } from '@/hooks/useReportPeriodFilter';
+import { TopProductsComparisonTable, type TopProductPivotRow } from '@/components/TopProductsComparisonTable';
 import {
   TrendingUp,
   Users,
@@ -25,7 +25,6 @@ import {
   CreditCard,
   FolderTree,
 } from 'lucide-react';
-import { getDateRange } from '@/lib/dateRanges';
 import { exportStyledReport } from '@/lib/exportExcel';
 import { exportStyledPdfReport, prewarmPdfFonts } from '@/lib/exportPdf';
 import { formatCurrency, formatNumber, formatDate, formatPercent } from '@/lib/formatters';
@@ -33,8 +32,8 @@ import { useReportHash } from '@/hooks/useReportHash';
 import type {
   DateRange,
   SalesAnalysisData,
-  SalesTrendData,
   TopProduct,
+  TopProductByBranch,
   SalesByBranch,
   SalesByCategory,
   SalesBySalesperson,
@@ -97,6 +96,55 @@ const reportOptions: ReportOption<ReportType>[] = [
   },
 ];
 
+const periodFilterReports = new Set<ReportType>([
+  'top-products',
+]);
+
+function formatDateParam(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function clampDateRange(range: DateRange, bounds: DateRange): DateRange {
+  return {
+    start: range.start < bounds.start ? bounds.start : range.start,
+    end: range.end > bounds.end ? bounds.end : range.end,
+  };
+}
+
+function getPeriodDateRange(periodKey: string, periodType: PeriodType, bounds: DateRange): DateRange {
+  if (!periodKey) return bounds;
+
+  if (periodType === 'yearly') {
+    return clampDateRange({ start: `${periodKey}-01-01`, end: `${periodKey}-12-31` }, bounds);
+  }
+
+  if (periodType === 'quarterly') {
+    const [year, quarterText] = periodKey.split('-Q');
+    const quarter = Number(quarterText || '1');
+    const startMonth = (quarter - 1) * 3;
+    const start = new Date(Number(year), startMonth, 1);
+    const end = new Date(Number(year), startMonth + 3, 0);
+    return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+  }
+
+  if (periodType === 'half-yearly') {
+    const [year, halfText] = periodKey.split('-H');
+    const half = Number(halfText || '1');
+    const startMonth = half === 1 ? 0 : 6;
+    const start = new Date(Number(year), startMonth, 1);
+    const end = new Date(Number(year), startMonth + 6, 0);
+    return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+  }
+
+  const [year, month] = periodKey.split('-').map(Number);
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 0);
+  return clampDateRange({ start: formatDateParam(start), end: formatDateParam(end) }, bounds);
+}
+
 function SalesReportContent() {
   const { dateRange, setDateRange } = useDateRangeStore();
   const [selectedReport, setSelectedReport] = useState<ReportType>('sales-trend');
@@ -109,11 +157,21 @@ function SalesReportContent() {
   // Category filter for Sales Analysis report
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
+  const { filter: salesFilter, setFilter: setSalesFilter } = useReportPeriodFilter();
+  const showPeriodFilter = periodFilterReports.has(selectedReport);
+
   // Handle URL hash for report selection
   useReportHash(reportOptions, setSelectedReport);
 
   // ✅ อ่าน URL query params เมื่อเข้าหน้า (จากการกด drill-down ใน Dashboard)
   const searchParams = useSearchParams();
+  const normalizeFilterValue = (value?: string | null) => {
+    const trimmed = (value || '').trim();
+    return trimmed || 'N/A';
+  };
+  const urlCategoryCode = searchParams.get('categoryCode');
+  const urlCategoryName = searchParams.get('categoryName');
+
   useEffect(() => {
     const reportParam  = searchParams.get('report');
     const startDateParam = searchParams.get('start_date');
@@ -123,6 +181,12 @@ function SalesReportContent() {
     if (reportParam && reportOptions.some(opt => opt.value === reportParam)) {
       setSelectedReport(reportParam as ReportType);
     }
+    if (urlCategoryCode) {
+      setSelectedCategory(normalizeFilterValue(urlCategoryCode));
+    }
+    if (urlCategoryName) {
+      setCategoryFilter(urlCategoryName);
+    }
 
     // เซ็ต date range ถ้ามีใน params
     if (startDateParam && endDateParam) {
@@ -131,21 +195,61 @@ function SalesReportContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // รันแค่ครั้งเดียวตอน mount
   useEffect(() => {
-    setSelectedCategory('ALL');
-    setCategoryFilter('all');
-  }, [selectedReport]);
+    setSelectedCategory(selectedReport === 'by-category' && urlCategoryCode ? normalizeFilterValue(urlCategoryCode) : 'ALL');
+    setCategoryFilter(selectedReport === 'sales-trend' && urlCategoryName ? urlCategoryName : 'all');
+  }, [selectedReport, urlCategoryCode, urlCategoryName]);
 
   // Pre-warm PDF font cache in background when page mounts
   useEffect(() => {
     prewarmPdfFonts();
   }, []);
 
+  const topProductsDateRange = useMemo<DateRange>(() => {
+    if (selectedReport !== 'top-products') return dateRange;
+
+    if (salesFilter.viewMode === 'normal' && salesFilter.selectedPeriod) {
+      return getPeriodDateRange(salesFilter.selectedPeriod, salesFilter.periodType, dateRange);
+    }
+
+    if (salesFilter.viewMode === 'comparison' && (salesFilter.compareA || salesFilter.compareB)) {
+      const ranges = [salesFilter.compareA, salesFilter.compareB]
+        .filter(Boolean)
+        .map((period) => getPeriodDateRange(period, salesFilter.periodType, dateRange));
+      if (ranges.length === 0) return dateRange;
+      return {
+        start: ranges.reduce((min, range) => (range.start < min ? range.start : min), ranges[0].start),
+        end: ranges.reduce((max, range) => (range.end > max ? range.end : max), ranges[0].end),
+      };
+    }
+
+    return dateRange;
+  }, [dateRange, salesFilter, selectedReport]);
+
+  const topProductsDateRanges = useMemo<DateRange[]>(() => {
+    if (selectedReport !== 'top-products') return [dateRange];
+
+    if (salesFilter.viewMode === 'normal' && salesFilter.selectedPeriod) {
+      return [getPeriodDateRange(salesFilter.selectedPeriod, salesFilter.periodType, dateRange)];
+    }
+
+    if (salesFilter.viewMode === 'comparison' && (salesFilter.compareA || salesFilter.compareB)) {
+      return [salesFilter.compareA, salesFilter.compareB]
+        .filter(Boolean)
+        .map((period) => getPeriodDateRange(period, salesFilter.periodType, dateRange));
+    }
+
+    return [dateRange];
+  }, [dateRange, salesFilter, selectedReport]);
+
+  const topProductsSubtitleDateRange = selectedReport === 'top-products' ? topProductsDateRange : dateRange;
+
   const { data: reportData, isLoading: loading, error: queryError, refetch } = useQuery({
-    queryKey: ['salesReportData', selectedReport, dateRange, selectedBranches],
+    queryKey: ['salesReportData', selectedReport, dateRange, topProductsDateRange, selectedBranches, salesFilter],
     queryFn: async () => {
+      const reportDateRange = selectedReport === 'top-products' ? topProductsDateRange : dateRange;
       const params = new URLSearchParams({
-        start_date: dateRange.start,
-        end_date: dateRange.end,
+        start_date: reportDateRange.start,
+        end_date: reportDateRange.end,
       });
       if (!selectedBranches.includes('ALL')) {
         selectedBranches.forEach((b) => params.append('branch', b));
@@ -186,7 +290,6 @@ function SalesReportContent() {
 
   const error = queryError instanceof Error ? queryError.message : queryError ? 'เกิดข้อผิดพลาดในการโหลดข้อมูล' : null;
 
-  const trendData: SalesTrendData[] = selectedReport === 'sales-trend' ? (reportData || []) : [];
   const salesAnalysis: SalesAnalysisData[] = selectedReport === 'sales-trend' ? (reportData || []) : [];
   const topProducts: TopProduct[] = selectedReport === 'top-products' ? (reportData || []) : [];
   const salesByBranch: SalesByBranch[] = selectedReport === 'by-branch' ? (reportData || []) : [];
@@ -195,7 +298,76 @@ function SalesReportContent() {
   const topCustomers: TopCustomer[] = selectedReport === 'top-customers' ? (reportData || []) : [];
   const arStatus: ARStatus[] = selectedReport === 'ar-status' ? (reportData || []) : [];
 
-  const fetchReportData = () => { refetch(); };
+  // Available months for period filter
+  const salesAvailableMonths = useMemo(
+    () => getMonthsFromDateRange(dateRange.start, dateRange.end),
+    [dateRange]
+  );
+
+  // Query for top-products branch comparison data
+  const isTopProductsComparison = selectedReport === 'top-products' && salesFilter.viewMode === 'comparison';
+  const { data: topProductsByBranchRaw } = useQuery<TopProductByBranch[]>({
+    queryKey: ['topProductsByBranch', topProductsDateRanges, selectedBranches, salesFilter],
+    queryFn: async () => {
+      const results = await Promise.all(topProductsDateRanges.map(async (range) => {
+        const params = new URLSearchParams({ start_date: range.start, end_date: range.end });
+        if (!selectedBranches.includes('ALL')) {
+          selectedBranches.forEach((b) => params.append('branch', b));
+        }
+        const response = await fetch(`/api/sales/top-products-by-branch?${params}`);
+        if (!response.ok) throw new Error('Failed to fetch top-products-by-branch');
+        const result = await response.json();
+        return result.data as TopProductByBranch[];
+      }));
+      return results.flat();
+    },
+    enabled: isTopProductsComparison,
+  });
+
+  // Pivot top-products-by-branch data into rows with branch columns
+  const comparisonBranches = useMemo(() => {
+    const realBranches = availableBranches.filter((b) => b.key !== 'ALL');
+    const selected = selectedBranches.includes('ALL')
+      ? realBranches
+      : realBranches.filter((b) => selectedBranches.includes(b.key));
+    const byName = new Map<string, { key: string; name: string; branchKeys: string[] }>();
+
+    selected.forEach((branch) => {
+      const existing = byName.get(branch.name);
+      if (existing) {
+        existing.branchKeys.push(branch.key);
+        return;
+      }
+      byName.set(branch.name, { key: branch.key, name: branch.name, branchKeys: [branch.key] });
+    });
+
+    return Array.from(byName.values());
+  }, [selectedBranches, availableBranches]);
+
+  const comparisonBranchKeyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    comparisonBranches.forEach((branch) => {
+      branch.branchKeys.forEach((branchKey) => map.set(branchKey, branch.key));
+    });
+    return map;
+  }, [comparisonBranches]);
+
+  const topProductsPivotRows = useMemo<TopProductPivotRow[]>(() => {
+    if (!topProductsByBranchRaw?.length) return [];
+    const byItem = new Map<string, TopProductPivotRow>();
+    topProductsByBranchRaw.forEach((row) => {
+      const itemKey = `${row.itemCode}::${row.unitCode}`;
+      if (!byItem.has(itemKey)) {
+        byItem.set(itemKey, { itemCode: row.itemCode, itemName: row.itemName, unitCode: row.unitCode, totalSalesAll: 0 });
+      }
+      const item = byItem.get(itemKey)!;
+      const branchKey = comparisonBranchKeyMap.get(row.branchSync) || row.branchSync;
+      item[`${branchKey}_qty`] = Number(item[`${branchKey}_qty`] || 0) + row.totalQtySold;
+      item[`${branchKey}_sales`] = Number(item[`${branchKey}_sales`] || 0) + row.totalSales;
+      item.totalSalesAll = (item.totalSalesAll as number) + row.totalSales;
+    });
+    return Array.from(byItem.values()).sort((a, b) => (b.totalSalesAll as number) - (a.totalSalesAll as number));
+  }, [comparisonBranchKeyMap, topProductsByBranchRaw]);
 
   // Column definitions for Sales Analysis
   const salesAnalysisColumns: ColumnDef<SalesAnalysisData>[] = [
@@ -275,7 +447,7 @@ function SalesReportContent() {
     },
   ];
 
-  // Column definitions for Top Products
+  // Column definitions for Top Products (normal mode)
   const topProductsColumns: ColumnDef<TopProduct>[] = [
     {
       key: 'rank',
@@ -287,32 +459,35 @@ function SalesReportContent() {
       ),
     },
     {
+      key: 'itemCode',
+      header: 'รหัสสินค้า',
+      sortable: true,
+      align: 'left',
+      render: (item: TopProduct) => (
+        <span className="font-mono text-xs text-muted-foreground">{item.itemCode}</span>
+      ),
+    },
+    {
       key: 'itemName',
       header: 'สินค้า',
       sortable: true,
       align: 'left',
       render: (item: TopProduct) => (
-        <div>
-          <div className="font-medium">{item.itemName}</div>
-          <div className="text-xs text-muted-foreground">{item.itemCode}</div>
-        </div>
+        <span className="font-medium">{item.itemName}</span>
       ),
     },
     {
-      key: 'brandName',
-      header: 'แบรนด์',
+      key: 'unitCode',
+      header: 'หน่วยนับ',
       sortable: true,
       align: 'left',
-    },
-    {
-      key: 'categoryName',
-      header: 'หมวดหมู่',
-      sortable: true,
-      align: 'left',
+      render: (item: TopProduct) => (
+        <span className="text-muted-foreground">{item.unitCode || '-'}</span>
+      ),
     },
     {
       key: 'totalQtySold',
-      header: 'จำนวนขาย',
+      header: 'จำนวน',
       sortable: true,
       align: 'right',
       render: (item: TopProduct) => formatNumber(item.totalQtySold),
@@ -327,36 +502,6 @@ function SalesReportContent() {
           ฿{formatCurrency(item.totalSales)}
         </span>
       ),
-    },
-    {
-      key: 'totalProfit',
-      header: 'กำไร',
-      sortable: true,
-      align: 'right',
-      render: (item: TopProduct) => (
-        <span className="font-medium text-blue-600">
-          ฿{formatCurrency(item.totalProfit)}
-        </span>
-      ),
-    },
-    {
-      key: 'profitMarginPct',
-      header: 'อัตรากำไร',
-      sortable: true,
-      align: 'right',
-      render: (item: TopProduct) => {
-        const color =
-          item.profitMarginPct >= 30
-            ? 'text-green-600'
-            : item.profitMarginPct >= 15
-              ? 'text-yellow-600'
-              : 'text-red-600';
-        return (
-          <span className={`font-medium ${color}`}>
-            {formatPercent(item.profitMarginPct)}
-          </span>
-        );
-      },
     },
   ];
 
@@ -726,7 +871,7 @@ function SalesReportContent() {
   // Get unique categories from salesByCategory (for by-category report)
   const uniqueCategories = Array.from(
     new Set(salesByCategory.map(item => JSON.stringify({ 
-      code: item.categoryCode, 
+      code: normalizeFilterValue(item.categoryCode),
       name: item.categoryName 
     })))
   ).map(str => JSON.parse(str) as { code: string; name: string })
@@ -737,10 +882,78 @@ function SalesReportContent() {
     new Set(salesAnalysis.map(item => item.categoryName).filter(Boolean))
   ).sort(sortByCustomOrder);
 
+  useEffect(() => {
+    if (selectedReport === 'by-category' && selectedCategory !== 'ALL' && uniqueCategories.length > 0) {
+      if (!uniqueCategories.some((cat) => cat.code === selectedCategory)) {
+        setSelectedCategory('ALL');
+      }
+    }
+    if (selectedReport === 'sales-trend' && categoryFilter !== 'all' && uniqueAnalysisCategories.length > 0) {
+      if (!uniqueAnalysisCategories.includes(categoryFilter)) {
+        setCategoryFilter('all');
+      }
+    }
+  }, [selectedReport, selectedCategory, categoryFilter, uniqueCategories, uniqueAnalysisCategories]);
+
   // Filter salesByCategory by selected category
   const filteredSalesByCategory = selectedCategory === 'ALL' 
     ? salesByCategory 
-    : salesByCategory.filter(item => item.categoryCode === selectedCategory);
+    : salesByCategory.filter(item => normalizeFilterValue(item.categoryCode) === selectedCategory);
+
+  const topProductsDateSubtitle = topProductsDateRanges.length > 1
+    ? `ช่วงวันที่ ${topProductsDateRanges.map((range) => `${range.start} ถึง ${range.end}`).join(', ')}`
+    : `ช่วงวันที่ ${topProductsSubtitleDateRange.start} ถึง ${topProductsSubtitleDateRange.end}`;
+
+  const topProductsComparisonExport = useMemo(() => {
+    const branchMetricKeys = comparisonBranches.flatMap((branch) => [
+      {
+        key: `${branch.key}_qty`,
+        header: 'จำนวนขาย',
+        type: 'number' as const,
+      },
+      {
+        key: `${branch.key}_sales`,
+        header: 'ยอดขาย',
+        type: 'currency' as const,
+      },
+    ]);
+
+    const data = topProductsPivotRows.map((row, index) => ({
+      rank: index + 1,
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      unitCode: row.unitCode,
+      ...Object.fromEntries(branchMetricKeys.map((column) => [column.key, Number(row[column.key] || 0)])),
+      totalSalesAll: Number(row.totalSalesAll || 0),
+    }));
+
+    return {
+      data,
+      headers: {
+        rank: '',
+        itemCode: '',
+        itemName: '',
+        unitCode: '',
+        ...Object.fromEntries(branchMetricKeys.map((column) => [column.key, column.header])),
+        totalSalesAll: '',
+      },
+      numberColumns: branchMetricKeys.filter((column) => column.type === 'number').map((column) => column.key),
+      currencyColumns: branchMetricKeys.filter((column) => column.type === 'currency').map((column) => column.key).concat(['totalSalesAll']),
+      columnGroups: [
+        { label: 'ลำดับ', span: 1 },
+        { label: 'รหัสสินค้า', span: 1 },
+        { label: 'สินค้า', span: 1 },
+        { label: 'หน่วยนับ', span: 1 },
+        ...comparisonBranches.map((branch) => ({ label: branch.name, span: 2 })),
+        { label: 'รวมยอดขาย', span: 1 },
+      ],
+      summaryColumns: Object.fromEntries(
+        branchMetricKeys.map((column) => [column.key, 'sum']).concat([
+          ['totalSalesAll', 'sum'],
+        ])
+      ),
+    };
+  }, [comparisonBranches, topProductsPivotRows]);
 
   // Render report content based on selected type
   const renderReportContent = () => {
@@ -783,18 +996,29 @@ function SalesReportContent() {
         );
 
       case 'top-products':
+        if (salesFilter.viewMode === 'comparison') {
+          return (
+            <TopProductsComparisonTable
+              data={topProductsPivotRows}
+              branches={comparisonBranches}
+              dateRange={topProductsDateRange}
+              itemsPerPage={10}
+              emptyMessage="ไม่มีข้อมูลสินค้าขายดี"
+            />
+          );
+        }
         return (
           <PaginatedTable
             data={topProducts}
             columns={topProductsColumns}
-            itemsPerPage={15}
+            itemsPerPage={10}
             emptyMessage="ไม่มีข้อมูลสินค้าขายดี"
             defaultSortKey="totalSales"
             defaultSortOrder="desc"
-            keyExtractor={(item: TopProduct) => item.itemCode}
+            keyExtractor={(item: TopProduct, index: number) => `${item.itemCode}-${index}`}
             showSummary={true}
             summaryConfig={{
-              labelColSpan: 1,
+              labelColSpan: 4,
               values: {
                 totalQtySold: (data) => {
                   const total = data.reduce((sum, item) => sum + item.totalQtySold, 0);
@@ -804,10 +1028,6 @@ function SalesReportContent() {
                   const total = data.reduce((sum, item) => sum + item.totalSales, 0);
                   return <span className="font-medium text-green-600">฿{formatCurrency(total)}</span>;
                 },
-                totalProfit: (data) => {
-                  const total = data.reduce((sum, item) => sum + item.totalProfit, 0);
-                  return <span className="font-medium text-blue-600">฿{formatCurrency(total)}</span>;
-                }
               }
             }}
           />
@@ -992,13 +1212,31 @@ function SalesReportContent() {
         };
 
       case 'top-products':
-        return () => exportStyledReport({
+        return () => {
+          if (salesFilter.viewMode === 'comparison') {
+            return exportStyledReport({
+              data: topProductsComparisonExport.data,
+              headers: topProductsComparisonExport.headers,
+              filename: 'สินค้าขายดี_เปรียบเทียบสาขา',
+              sheetName: 'Top Products',
+              title: 'รายงานสินค้าขายดี - เปรียบเทียบสาขา',
+              subtitle: withBranchSubtitle(topProductsDateSubtitle),
+              numberColumns: topProductsComparisonExport.numberColumns,
+              currencyColumns: topProductsComparisonExport.currencyColumns,
+              columnGroups: topProductsComparisonExport.columnGroups,
+              summaryConfig: {
+                columns: topProductsComparisonExport.summaryColumns,
+              },
+            });
+          }
+
+          return exportStyledReport({
           data: topProducts,
-          headers: { itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalQtySold: 'จำนวนขาย', totalSales: 'ยอดขาย', totalProfit: 'กำไร', profitMarginPct: 'อัตรากำไร (%)' },
+          headers: { itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', unitCode: 'หน่วยนับ', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalQtySold: 'จำนวนขาย', totalSales: 'ยอดขาย', totalProfit: 'กำไร', profitMarginPct: 'อัตรากำไร (%)' },
           filename: 'สินค้าขายดี',
           sheetName: 'Top Products',
           title: 'รายงานสินค้าขายดี',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          subtitle: withBranchSubtitle(topProductsDateSubtitle),
           numberColumns: ['totalQtySold'],
           currencyColumns: ['totalSales', 'totalProfit'],
           percentColumns: ['profitMarginPct'],
@@ -1009,7 +1247,8 @@ function SalesReportContent() {
               totalProfit: 'sum',
             }
           }
-        });
+          });
+        };
 
       case 'by-branch':
         return () => exportStyledReport({
@@ -1158,12 +1397,30 @@ function SalesReportContent() {
         };
 
       case 'top-products':
-        return () => exportStyledPdfReport({
-          data: topProducts,
-          headers: { itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalQtySold: 'จำนวนขาย', totalSales: 'ยอดขาย', totalProfit: 'กำไร', profitMarginPct: 'อัตรากำไร (%)' },
+        return () => {
+          if (salesFilter.viewMode === 'comparison') {
+            return exportStyledPdfReport({
+              data: topProductsComparisonExport.data,
+              headers: topProductsComparisonExport.headers,
+              filename: 'สินค้าขายดี_เปรียบเทียบสาขา',
+              title: 'รายงานสินค้าขายดี - เปรียบเทียบสาขา',
+              subtitle: withBranchSubtitle(topProductsDateSubtitle),
+              numberColumns: topProductsComparisonExport.numberColumns,
+              currencyColumns: topProductsComparisonExport.currencyColumns,
+              columnGroups: topProductsComparisonExport.columnGroups,
+              tableLayout: { verticalGrid: true },
+              summaryConfig: {
+                columns: topProductsComparisonExport.summaryColumns,
+              },
+            });
+          }
+
+          return exportStyledPdfReport({
+          data: topProducts.map((item, index) => ({ rank: index + 1, ...item })),
+          headers: { rank: 'ลำดับ', itemCode: 'รหัสสินค้า', itemName: 'ชื่อสินค้า', unitCode: 'หน่วยนับ', brandName: 'แบรนด์', categoryName: 'หมวดหมู่', totalQtySold: 'จำนวนขาย', totalSales: 'ยอดขาย', totalProfit: 'กำไร', profitMarginPct: 'อัตรากำไร (%)' },
           filename: 'สินค้าขายดี',
           title: 'รายงานสินค้าขายดี',
-          subtitle: withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+          subtitle: withBranchSubtitle(topProductsDateSubtitle),
           numberColumns: ['totalQtySold'],
           currencyColumns: ['totalSales', 'totalProfit'],
           percentColumns: ['profitMarginPct'],
@@ -1174,7 +1431,8 @@ function SalesReportContent() {
               totalProfit: 'sum',
             }
           }
-        });
+          });
+        };
 
       case 'by-branch':
         return () => exportStyledPdfReport({
@@ -1311,12 +1569,22 @@ function SalesReportContent() {
           <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
 
-        {/* Compact Report Type Selector */}
-        <ReportTypeSelector
-          value={selectedReport}
-          options={reportOptions}
-          onChange={(value) => setSelectedReport(value as ReportType)}
-        />
+        {/* Compact Report Type Selector + Period Filter */}
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <ReportTypeSelector
+            value={selectedReport}
+            options={reportOptions}
+            onChange={(value) => setSelectedReport(value as ReportType)}
+          />
+          {showPeriodFilter && (
+            <ReportPeriodFilter
+              value={salesFilter}
+              onChange={setSalesFilter}
+              availableMonths={salesAvailableMonths}
+              className="ml-auto"
+            />
+          )}
+        </div>
       </motion.div>
 
       {/* Error Display */}
