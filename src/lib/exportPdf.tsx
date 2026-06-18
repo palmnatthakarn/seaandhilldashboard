@@ -230,6 +230,10 @@ type PdfColumnGroup = {
   span: number;
 };
 
+type PdfTableLayout = {
+  verticalGrid?: boolean;
+};
+
 export type PdfExportResult = {
   blob: Blob;
   filename: string;
@@ -369,6 +373,15 @@ function computeColumnWidths<T extends object>(
       // Account name column - larger fixed width for Thai text
       return 38;
     }
+    if (key === 'rank') {
+      return 4;
+    }
+    if (key === 'itemCode') {
+      return 8;
+    }
+    if (key === 'itemName' || key === 'productLabel') {
+      return 28;
+    }
     
     // For other columns, calculate based on content
     let maxLen = header.length * 1.3; // Thai characters need more space
@@ -455,6 +468,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
   percentColumns?: string[];
   summaryConfig?: ExcelSummaryConfig;
   columnGroups?: PdfColumnGroup[];
+  tableLayout?: PdfTableLayout;
 }): Promise<PdfExportResult | void> {
   const {
     data,
@@ -467,6 +481,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
     percentColumns = [],
     summaryConfig,
     columnGroups,
+    tableLayout,
   } = options;
 
   if (!data || data.length === 0) {
@@ -483,6 +498,17 @@ export async function exportStyledPdfReport<T extends object>(options: {
 
   const isNumberColumn = (key: string) =>
     numberColumns.includes(key) || currencyColumns.includes(key) || percentColumns.includes(key);
+  const verticalGridCell = (index: number, isLast = index === headerKeys.length - 1) =>
+    tableLayout?.verticalGrid
+      ? {
+          borderLeftWidth: index === 0 ? 0 : 1,
+          borderLeftColor: COLORS.border,
+          borderLeftStyle: 'solid' as const,
+          borderRightWidth: isLast ? 1 : 0,
+          borderRightColor: COLORS.border,
+          borderRightStyle: 'solid' as const,
+        }
+      : {};
 
   // Helper functions to detect row types for P&L report
   const isSectionHeader = (row: T): boolean => {
@@ -576,7 +602,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
 
         <View style={styles.table}>
           {columnGroups?.length ? (
-            <View style={[styles.row, styles.headerRow]} fixed>
+            <View style={[styles.row, styles.headerRow, { minHeight: 40 }]} fixed>
               {columnGroups.map((group, groupIndex) => {
                 const startIndex = columnGroups
                   .slice(0, groupIndex)
@@ -584,35 +610,88 @@ export async function exportStyledPdfReport<T extends object>(options: {
                 const groupWidth = colWidths
                   .slice(startIndex, startIndex + group.span)
                   .reduce((sum, width) => sum + width, 0);
+                const isLastGroup = startIndex + group.span >= headerKeys.length;
+                const shouldMergeRows = group.span === 1 && !headerValues[startIndex];
 
                 return (
                   <View
                     key={`hg-${groupIndex}`}
-                    style={[styles.cell, { flexBasis: `${groupWidth}%`, flexGrow: 0 }]}
+                    style={[
+                      {
+                        flexBasis: `${groupWidth}%`,
+                        flexGrow: 0,
+                        flexShrink: 0,
+                        flexDirection: 'column',
+                        borderLeftWidth: tableLayout?.verticalGrid && startIndex > 0 ? 1 : 0,
+                        borderLeftColor: COLORS.border,
+                        borderLeftStyle: 'solid',
+                        borderRightWidth: tableLayout?.verticalGrid && isLastGroup ? 1 : 0,
+                        borderRightColor: COLORS.border,
+                        borderRightStyle: 'solid',
+                      },
+                    ]}
                   >
-                    <Text style={[styles.headerCellText, { textAlign: 'center' }]}>
-                      {guardPdfText(group.label)}
-                    </Text>
+                    {shouldMergeRows ? (
+                      <View style={[styles.cell, { flexGrow: 1, minHeight: 40 }]}>
+                        <Text style={[styles.headerCellText, { textAlign: isNumberColumn(headerKeys[startIndex]) ? 'right' : 'center' }]}>
+                          {guardPdfText(group.label)}
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        <View style={[styles.cell, { minHeight: 20, borderBottomWidth: 1, borderBottomColor: COLORS.border, borderBottomStyle: 'solid' }]}>
+                          <Text style={[styles.headerCellText, { textAlign: 'center' }]}>
+                            {guardPdfText(group.label)}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', minHeight: 20 }}>
+                          {headerValues.slice(startIndex, startIndex + group.span).map((header, childIndex) => {
+                            const index = startIndex + childIndex;
+                            const key = headerKeys[index];
+                            const align = isNumberColumn(key) ? 'right' : 'left';
+                            const childWidth = groupWidth ? (colWidths[index] / groupWidth) * 100 : 100 / group.span;
+
+                            return (
+                              <View
+                                key={`h-${index}`}
+                                style={[
+                                  styles.cell,
+                                  {
+                                    flexBasis: `${childWidth}%`,
+                                    flexGrow: 0,
+                                    borderLeftWidth: tableLayout?.verticalGrid && childIndex > 0 ? 1 : 0,
+                                    borderLeftColor: COLORS.border,
+                                    borderLeftStyle: 'solid',
+                                  },
+                                ]}
+                              >
+                                <Text style={[styles.headerCellText, { textAlign: align }]}>{guardPdfText(header)}</Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </>
+                    )}
                   </View>
                 );
               })}
             </View>
-          ) : null}
-
-          <View style={[styles.row, styles.headerRow]} fixed>
-            {headerValues.map((header, index) => {
-              const key = headerKeys[index];
-              const align = isNumberColumn(key) ? 'right' : 'left';
-              return (
-                <View
-                  key={`h-${index}`}
-                  style={[styles.cell, { flexBasis: `${colWidths[index]}%`, flexGrow: 0 }]}
-                >
-                  <Text style={[styles.headerCellText, { textAlign: align }]}>{guardPdfText(header)}</Text>
-                </View>
-              );
-            })}
-          </View>
+          ) : (
+            <View style={[styles.row, styles.headerRow]} fixed>
+              {headerValues.map((header, index) => {
+                const key = headerKeys[index];
+                const align = isNumberColumn(key) ? 'right' : 'left';
+                return (
+                  <View
+                    key={`h-${index}`}
+                    style={[styles.cell, { flexBasis: `${colWidths[index]}%`, flexGrow: 0 }, verticalGridCell(index)]}
+                  >
+                    <Text style={[styles.headerCellText, { textAlign: align }]}>{guardPdfText(header)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
 
           {data.map((row, rowIndex) => {
             // Skip completely blank rows
@@ -669,7 +748,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
                   return (
                     <View
                       key={`c-${rowIndex}-${colIndex}`}
-                      style={[cellStyle, { flexBasis: `${colWidths[colIndex]}%`, flexGrow: 0 }]}
+                      style={[cellStyle, { flexBasis: `${colWidths[colIndex]}%`, flexGrow: 0 }, verticalGridCell(colIndex)]}
                     >
                       <Text style={[textStyle, { textAlign: align }]}>
                         {guardPdfText(cellValue)}
@@ -685,7 +764,7 @@ export async function exportStyledPdfReport<T extends object>(options: {
             <View style={[styles.row, styles.summaryRow]} wrap={false}>
               {headerKeys.map((key, colIndex) => {
                 const align = isNumberColumn(key) ? 'right' : 'left';
-                const colStyle = [styles.cell, { flexBasis: `${colWidths[colIndex]}%`, flexGrow: 0 }];
+                const colStyle = [styles.cell, { flexBasis: `${colWidths[colIndex]}%`, flexGrow: 0 }, verticalGridCell(colIndex)];
 
                 if (colIndex === 0) {
                   return (
