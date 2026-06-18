@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
@@ -21,6 +21,10 @@ interface PurchaseTrendChartProps {
   data: PurchaseTrendData[];
   height?: string;
 }
+
+const SERIES_PURCHASES = '\u0e22\u0e2d\u0e14\u0e0b\u0e37\u0e49\u0e2d';
+const SERIES_ORDERS = '\u0e08\u0e33\u0e19\u0e27\u0e19\u0e2d\u0e2d\u0e40\u0e14\u0e2d\u0e23\u0e4c';
+const Y_AXIS_PURCHASES = '\u0e22\u0e2d\u0e14\u0e0b\u0e37\u0e49\u0e2d (\u0e3f)';
 
 export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -51,9 +55,9 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
 
           seriesParams.forEach((param) => {
             const valueNumber = getTooltipNumber(param.value);
-            const value = param.seriesName === 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­'
+            const value = param.seriesName === SERIES_PURCHASES
               ? fmtFull(valueNumber)
-              : `${fmtCount(valueNumber)} à¸£à¸²à¸¢à¸à¸²à¸£`;
+              : `${fmtCount(valueNumber)} รายการ`;
 
             result += `<div style="margin-bottom: 4px;">
               ${param.marker} ${param.seriesName}: <strong>${value}</strong>
@@ -64,7 +68,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
         },
       },
       legend: {
-        data: ['à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­', 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ'],
+        data: [SERIES_PURCHASES, SERIES_ORDERS],
         top: 0,
       },
       grid: {
@@ -85,7 +89,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
       yAxis: [
         {
           type: 'value',
-          name: 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­ (à¸¿)',
+          name: Y_AXIS_PURCHASES,
           position: 'left',
           axisLabel: {
             formatter: (value: number) => {
@@ -97,7 +101,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
         },
         {
           type: 'value',
-          name: 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ',
+          name: SERIES_ORDERS,
           position: 'right',
           axisLabel: {
             formatter: '{value}',
@@ -106,7 +110,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
       ],
       series: [
         {
-          name: 'à¸¢à¸­à¸”à¸‹à¸·à¹‰à¸­',
+          name: SERIES_PURCHASES,
           type: 'line',
           data: purchaseData,
           smooth: true,
@@ -122,7 +126,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
           },
         },
         {
-          name: 'à¸ˆà¸³à¸™à¸§à¸™à¸­à¸­à¹€à¸”à¸­à¸£à¹Œ',
+          name: SERIES_ORDERS,
           type: 'bar',
           data: orderData,
           yAxisIndex: 1,
@@ -149,7 +153,7 @@ export function PurchaseTrendChart({ data, height = '400px' }: PurchaseTrendChar
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center" style={{ height }}>
-        <p className="text-muted-foreground text-sm">à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸¡à¸¹à¸¥</p>
+        <p className="text-muted-foreground text-sm">ไม่มีข้อมูล</p>
       </div>
     );
   }

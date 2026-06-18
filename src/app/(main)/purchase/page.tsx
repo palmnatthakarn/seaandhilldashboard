@@ -153,7 +153,7 @@ export default function PurchasePage() {
   const purchaseByCategorySummary = data?.purchaseByCategorySummary || [];
   const purchaseByAssetSummary = data?.purchaseByAssetSummary || [];
   const purchaseByBrand = data?.purchaseByBrand || [];
-  const apOutstanding = data?.apOutstanding || [];
+  const apOutstanding = (data?.apOutstanding || []).slice(0, 20);
   const chartOfAccounts = data?.chartOfAccounts || [];
 
   // Fetch items by selected account

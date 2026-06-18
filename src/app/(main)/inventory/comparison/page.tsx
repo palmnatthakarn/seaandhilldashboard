@@ -259,43 +259,25 @@ export default function InventoryComparisonPage() {
     }],
   }), [data]);
 
-  /* 5. Top Products Comparison */
-  const topProductsChart = useMemo(() => {
-    const products: { name: string; branch: string; sales: number; color: string }[] = [];
-    data.forEach((b, i) => {
-      b.topProducts.slice(0, 10).forEach(p => {
-        products.push({
-          name: (p.itemName || p.productName || p.name || 'N/A').substring(0, 20),
-          branch: shortName(b.branchName),
-          sales: toChartNumber(p.totalSales ?? p.totalSalesValue ?? p.sales),
-          color: BRANCH_PALETTE[i % BRANCH_PALETTE.length].hex,
-        });
-      });
-    });
-    products.sort((a, b) => b.sales - a.sales);
-    const top10 = products.slice(0, 10);
+  /* 5. Top Products Comparison - Top 10 per branch */
+  const topProductsByBranch = useMemo(() => {
+    const groups = data.map((branch, branchIndex) => ({
+      branchKey: branch.branchKey,
+      branchName: branch.branchName,
+      shortBranchName: shortName(branch.branchName),
+      color: BRANCH_PALETTE[branchIndex % BRANCH_PALETTE.length].hex,
+      products: branch.topProducts.slice(0, 10).map((product) => ({
+        name: product.itemName || product.productName || product.name || 'N/A',
+        sales: toChartNumber(product.totalSales ?? product.totalSalesValue ?? product.sales),
+      })),
+    }));
 
-    return {
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        formatter: (params: any) => {
-          let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-          params.forEach((p: any) => {
-            html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${fmt(p.value)}</div>`;
-          });
-          return html;
-        },
-      },
-      grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
-      xAxis: { type: 'value', axisLabel: { formatter: (v: number) => fmtShort(v) } },
-      yAxis: { type: 'category', data: top10.map(p => p.name).reverse(), axisLabel: { fontSize: 10 } },
-      series: [{
-        type: 'bar',
-        data: [...top10].reverse().map(p => ({ value: p.sales, itemStyle: { color: p.color, borderRadius: [0, 4, 4, 0] } })),
-        barWidth: '60%',
-      }],
-    };
+    const maxSales = Math.max(
+      ...groups.flatMap((group) => group.products.map((product) => product.sales)),
+      1
+    );
+
+    return { groups, maxSales };
   }, [data]);
 
   /* 6. Stock Coverage Days - Radar */
@@ -584,10 +566,59 @@ export default function InventoryComparisonPage() {
           </motion.div>
 
           <motion.div variants={itemVariants} className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
-            <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
-              <SectionHeader icon={<TrendingUp className="h-4 w-4 text-sky-600" />} title="สินค้าขายดี Top 10" desc="สินค้าที่มียอดขายสูงสุดจากทุกกิจการ" />
-              <div className="px-4 pb-4">
-                <ReactECharts option={topProductsChart} style={{ height: 320 }} />
+            <div className="rounded-2xl border bg-card shadow-sm overflow-hidden md:col-span-2">
+              <SectionHeader icon={<TrendingUp className="h-4 w-4 text-sky-600" />} title="สินค้าขายดี Top 10" desc="Top 10 แยกตามกิจการ ใช้สเกลเดียวกันเพื่อเทียบข้ามกิจการ" />
+              <div className="px-6 pb-5 overflow-x-auto">
+                {topProductsByBranch.groups.some((group) => group.products.length > 0) ? (
+                  <div
+                    className="grid gap-5"
+                    style={{
+                      gridTemplateColumns: `repeat(${topProductsByBranch.groups.length}, minmax(280px, 1fr))`,
+                      minWidth: `${Math.max(topProductsByBranch.groups.length, 1) * 280}px`,
+                    }}
+                  >
+                    {topProductsByBranch.groups.map((group) => (
+                      <div key={group.branchKey} className="min-w-0">
+                        <div className="mb-3 flex items-center justify-between gap-3 border-b pb-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color }} />
+                            <h3 className="truncate text-sm font-semibold text-foreground" title={group.branchName}>
+                              {group.shortBranchName}
+                            </h3>
+                          </div>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">Top {group.products.length}</span>
+                        </div>
+
+                        {group.products.length > 0 ? (
+                          <div className="space-y-2.5">
+                            {group.products.map((product, index) => (
+                              <div key={`${group.branchKey}-${product.name}-${index}`} className="space-y-1">
+                                <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-2 text-xs">
+                                  <span className="text-right font-medium text-muted-foreground">{index + 1}</span>
+                                  <span className="truncate text-foreground" title={product.name}>{product.name}</span>
+                                  <span className="font-medium tabular-nums text-muted-foreground">{fmtK(product.sales)}</span>
+                                </div>
+                                <div className="ml-7 h-2 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${Math.max((product.sales / topProductsByBranch.maxSales) * 100, product.sales > 0 ? 2 : 0)}%`,
+                                      backgroundColor: group.color,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดี</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-8 text-center text-xs text-muted-foreground">ไม่มีข้อมูลสินค้าขายดีในช่วงเวลานี้</p>
+                )}
               </div>
             </div>
 
