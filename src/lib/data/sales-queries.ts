@@ -40,15 +40,21 @@ export function getTotalSalesQuery(dateRange: DateRange): string {
   const previousEndDate = previousPeriod.end;
 
   return `SELECT
-  sum(total_amount) as current_value,
-  (SELECT sum(total_amount)
-   FROM saleinvoice_transaction
-   WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+  coalesce(sum(sid.sum_amount), 0) as current_value,
+  (SELECT coalesce(sum(sid2.sum_amount), 0)
+   FROM saleinvoice_transaction_detail sid2
+   JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+   WHERE si2.status_cancel != 'Cancel' AND sid2.status_cancel != 'Cancel'
+     AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${previousStartDate}') AND toDate('${previousEndDate}')
+     AND trim(sid2.item_code) != '' AND trim(sid2.item_name) != ''
+     AND sid2.qty > 0 AND sid2.sum_amount > 0 AND trim(sid2.unit_code) != ''
   ) as previous_value
-FROM saleinvoice_transaction
-WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
+FROM saleinvoice_transaction_detail sid
+JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+WHERE si.status_cancel != 'Cancel' AND sid.status_cancel != 'Cancel'
+  AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${startDate}') AND toDate('${endDate}')
+  AND trim(sid.item_code) != '' AND trim(sid.item_name) != ''
+  AND sid.qty > 0 AND sid.sum_amount > 0 AND trim(sid.unit_code) != ''`;
 }
 
 /**
@@ -87,15 +93,21 @@ export function getTotalOrdersQuery(dateRange: DateRange): string {
   const previousEndDate = previousPeriod.end;
 
   return `SELECT
-  count(DISTINCT doc_no) as current_value,
-  (SELECT count(DISTINCT doc_no)
-   FROM saleinvoice_transaction
-   WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+  count(DISTINCT concat(si.branch_sync, ':', si.doc_no)) as current_value,
+  (SELECT count(DISTINCT concat(si2.branch_sync, ':', si2.doc_no))
+   FROM saleinvoice_transaction_detail sid2
+   JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+   WHERE si2.status_cancel != 'Cancel' AND sid2.status_cancel != 'Cancel'
+     AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${previousStartDate}') AND toDate('${previousEndDate}')
+     AND trim(sid2.item_code) != '' AND trim(sid2.item_name) != ''
+     AND sid2.qty > 0 AND sid2.sum_amount > 0 AND trim(sid2.unit_code) != ''
   ) as previous_value
-FROM saleinvoice_transaction
-WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
+FROM saleinvoice_transaction_detail sid
+JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+WHERE si.status_cancel != 'Cancel' AND sid.status_cancel != 'Cancel'
+  AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${startDate}') AND toDate('${endDate}')
+  AND trim(sid.item_code) != '' AND trim(sid.item_name) != ''
+  AND sid.qty > 0 AND sid.sum_amount > 0 AND trim(sid.unit_code) != ''`;
 }
 
 /**
@@ -109,15 +121,28 @@ export function getAvgOrderValueQuery(dateRange: DateRange): string {
   const previousEndDate = previousPeriod.end;
 
   return `SELECT
-  avg(total_amount) as current_value,
-  (SELECT avg(total_amount)
-   FROM saleinvoice_transaction
-   WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
-  ) as previous_value
-FROM saleinvoice_transaction
-WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
+  coalesce(sum(order_sales) / nullIf(count(), 0), 0) as current_value,
+  (SELECT coalesce(sum(order_sales) / nullIf(count(), 0), 0)
+   FROM (
+     SELECT si2.branch_sync, si2.doc_no, sum(sid2.sum_amount) AS order_sales
+     FROM saleinvoice_transaction_detail sid2
+     JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+     WHERE si2.status_cancel != 'Cancel' AND sid2.status_cancel != 'Cancel'
+       AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${previousStartDate}') AND toDate('${previousEndDate}')
+       AND trim(sid2.item_code) != '' AND trim(sid2.item_name) != ''
+       AND sid2.qty > 0 AND sid2.sum_amount > 0 AND trim(sid2.unit_code) != ''
+     GROUP BY si2.branch_sync, si2.doc_no
+   )) as previous_value
+FROM (
+  SELECT si.branch_sync, si.doc_no, sum(sid.sum_amount) AS order_sales
+  FROM saleinvoice_transaction_detail sid
+  JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+  WHERE si.status_cancel != 'Cancel' AND sid.status_cancel != 'Cancel'
+    AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate('${startDate}') AND toDate('${endDate}')
+    AND trim(sid.item_code) != '' AND trim(sid.item_name) != ''
+    AND sid.qty > 0 AND sid.sum_amount > 0 AND trim(sid.unit_code) != ''
+  GROUP BY si.branch_sync, si.doc_no
+)`;
 }
 
 /**

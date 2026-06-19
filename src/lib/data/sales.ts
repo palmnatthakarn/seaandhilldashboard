@@ -116,71 +116,133 @@ export async function getSalesKPIs(dateRange: DateRange, branchSync?: string[]):
     const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
     const branchFilter = buildBranchFilter(branchSync);
 
-    // Total Sales — use invoice header total_amount
+    // Total Sales — sum detail line amounts with Thai timezone date filter
     const salesQuery = `
       SELECT
-        sum(total_amount) as current_value,
-        (SELECT sum(total_amount)
-         FROM saleinvoice_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
-        ) as previous_value
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
-    `;
-
-    // Gross Profit — use detail lines for cost calculation
-    const profitQuery = `
-      SELECT
-        sum(sid.sum_amount - sid.sum_of_cost) as current_value,
-        sum(sid.sum_amount) as revenue,
-        (SELECT sum(sid2.sum_amount - sid2.sum_of_cost)
+        coalesce(sum(sid.sum_amount), 0) as current_value,
+        (SELECT coalesce(sum(sid2.sum_amount), 0)
          FROM saleinvoice_transaction_detail sid2
          JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
          WHERE si2.status_cancel != 'Cancel'
-           AND si2.doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
+           AND sid2.status_cancel != 'Cancel'
+           AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({previous_start:String}) AND toDate({previous_end:String})
+           AND trim(sid2.item_code) != ''
+           AND trim(sid2.item_name) != ''
+           AND sid2.qty > 0
+           AND sid2.sum_amount > 0
+           AND trim(sid2.unit_code) != ''
            ${branchFilter.sql.replace(/branch_sync/g, 'si2.branch_sync')}
         ) as previous_value
       FROM saleinvoice_transaction_detail sid
       JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
       WHERE si.status_cancel != 'Cancel'
-        AND si.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND sid.status_cancel != 'Cancel'
+        AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({start_date:String}) AND toDate({end_date:String})
+        AND trim(sid.item_code) != ''
+        AND trim(sid.item_name) != ''
+        AND sid.qty > 0
+        AND sid.sum_amount > 0
+        AND trim(sid.unit_code) != ''
+        ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+    `;
+
+    // Gross Profit
+    const profitQuery = `
+      SELECT
+        coalesce(sum(sid.sum_amount - sid.sum_of_cost), 0) as current_value,
+        coalesce(sum(sid.sum_amount), 0) as revenue,
+        (SELECT coalesce(sum(sid2.sum_amount - sid2.sum_of_cost), 0)
+         FROM saleinvoice_transaction_detail sid2
+         JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+         WHERE si2.status_cancel != 'Cancel'
+           AND sid2.status_cancel != 'Cancel'
+           AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({previous_start:String}) AND toDate({previous_end:String})
+           AND trim(sid2.item_code) != ''
+           AND trim(sid2.item_name) != ''
+           AND sid2.qty > 0
+           AND sid2.sum_amount > 0
+           AND trim(sid2.unit_code) != ''
+           ${branchFilter.sql.replace(/branch_sync/g, 'si2.branch_sync')}
+        ) as previous_value
+      FROM saleinvoice_transaction_detail sid
+      JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+      WHERE si.status_cancel != 'Cancel'
+        AND sid.status_cancel != 'Cancel'
+        AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({start_date:String}) AND toDate({end_date:String})
+        AND trim(sid.item_code) != ''
+        AND trim(sid.item_name) != ''
+        AND sid.qty > 0
+        AND sid.sum_amount > 0
+        AND trim(sid.unit_code) != ''
         ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
     `;
 
     // Total Orders
     const ordersQuery = `
       SELECT
-        count(DISTINCT doc_no) as current_value,
-        (SELECT count(DISTINCT doc_no)
-         FROM saleinvoice_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
+        count(DISTINCT concat(si.branch_sync, ':', si.doc_no)) as current_value,
+        (SELECT count(DISTINCT concat(si2.branch_sync, ':', si2.doc_no))
+         FROM saleinvoice_transaction_detail sid2
+         JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+         WHERE si2.status_cancel != 'Cancel'
+           AND sid2.status_cancel != 'Cancel'
+           AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({previous_start:String}) AND toDate({previous_end:String})
+           AND trim(sid2.item_code) != ''
+           AND trim(sid2.item_name) != ''
+           AND sid2.qty > 0
+           AND sid2.sum_amount > 0
+           AND trim(sid2.unit_code) != ''
+           ${branchFilter.sql.replace(/branch_sync/g, 'si2.branch_sync')}
         ) as previous_value
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+      FROM saleinvoice_transaction_detail sid
+      JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+      WHERE si.status_cancel != 'Cancel'
+        AND sid.status_cancel != 'Cancel'
+        AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({start_date:String}) AND toDate({end_date:String})
+        AND trim(sid.item_code) != ''
+        AND trim(sid.item_name) != ''
+        AND sid.qty > 0
+        AND sid.sum_amount > 0
+        AND trim(sid.unit_code) != ''
+        ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
     `;
 
     // Average Order Value
     const avgOrderQuery = `
       SELECT
-        avg(total_amount) as current_value,
-        (SELECT avg(total_amount)
-         FROM saleinvoice_transaction
-         WHERE status_cancel != 'Cancel'
-           AND doc_datetime BETWEEN {previous_start:String} AND {previous_end:String}
-           ${branchFilter.sql}
+        coalesce(sum(order_sales) / nullIf(count(), 0), 0) as current_value,
+        (SELECT coalesce(sum(order_sales) / nullIf(count(), 0), 0)
+         FROM (
+           SELECT si2.branch_sync, si2.doc_no, sum(sid2.sum_amount) AS order_sales
+           FROM saleinvoice_transaction_detail sid2
+           JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
+           WHERE si2.status_cancel != 'Cancel'
+             AND sid2.status_cancel != 'Cancel'
+             AND date(si2.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({previous_start:String}) AND toDate({previous_end:String})
+             AND trim(sid2.item_code) != ''
+             AND trim(sid2.item_name) != ''
+             AND sid2.qty > 0
+             AND sid2.sum_amount > 0
+             AND trim(sid2.unit_code) != ''
+             ${branchFilter.sql.replace(/branch_sync/g, 'si2.branch_sync')}
+           GROUP BY si2.branch_sync, si2.doc_no
+         )
         ) as previous_value
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
-        ${branchFilter.sql}
+      FROM (
+        SELECT si.branch_sync, si.doc_no, sum(sid.sum_amount) AS order_sales
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND sid.status_cancel != 'Cancel'
+          AND date(si.doc_datetime + INTERVAL 7 HOUR) BETWEEN toDate({start_date:String}) AND toDate({end_date:String})
+          AND trim(sid.item_code) != ''
+          AND trim(sid.item_name) != ''
+          AND sid.qty > 0
+          AND sid.sum_amount > 0
+          AND trim(sid.unit_code) != ''
+          ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+        GROUP BY si.branch_sync, si.doc_no
+      )
     `;
 
     const params = {
