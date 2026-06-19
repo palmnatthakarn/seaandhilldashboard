@@ -1023,7 +1023,7 @@ export async function getItemSuppliers(
       WITH ${returnDocsCte}
       SELECT
         pt.supplier_code AS supplierCode,
-        pt.supplier_name AS supplierName,
+        max(pt.supplier_name) AS supplierName,
         pt.branch_sync AS branchSync,
         count(DISTINCT pt.doc_no) AS poCount,
         sum(ptd.qty) AS totalQty,
@@ -1038,7 +1038,7 @@ export async function getItemSuppliers(
         AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
         AND coalesce(r.has_return, 0) = 0
         ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
-      GROUP BY pt.supplier_code, pt.supplier_name, pt.branch_sync
+      GROUP BY pt.supplier_code, pt.branch_sync
       HAVING totalAmount != 0
       ORDER BY totalAmount DESC
     `;
