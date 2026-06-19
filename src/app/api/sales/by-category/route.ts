@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const cachedQuery = createCachedQuery(
       () => getSalesByCategory({ start: startDate, end: endDate }, normalizedBranches),
-      ['sales', 'by-category', startDate, endDate, ...normalizedBranches],
+      ['sales', 'by-category-v2-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.MEDIUM
     );
 

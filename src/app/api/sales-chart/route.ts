@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       async () => {
         return await getSalesChartData(normalizedBranches, dateRange);
       },
-      ['dashboard', 'sales-chart', ...normalizedBranches, startDate || '', endDate || ''],
+      ['dashboard', 'sales-chart-v2-product-detail-total', ...normalizedBranches, startDate || '', endDate || ''],
       CacheDuration.MEDIUM // 5 minutes cache
     );
 

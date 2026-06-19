@@ -3,6 +3,7 @@
 import { MessageCircle, X, Send, Loader2, Database } from 'lucide-react';
 import { useCallback, useState, useEffect, useRef } from 'react';
 import MarkdownRenderer from './MarkdownRenderer';
+import { useBranchStore } from '@/store/useBranchStore';
 
 interface Message {
   id: string;
@@ -17,6 +18,8 @@ export default function ChatWidget() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const selectedBranches = useBranchStore((s) => s.selectedBranches);
+  const availableBranches = useBranchStore((s) => s.availableBranches);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -47,6 +50,10 @@ export default function ChatWidget() {
             role: m.role,
             content: m.content,
           })),
+          branchContext: {
+            selectedBranches,
+            availableBranches,
+          },
         }),
       });
 
@@ -94,7 +101,7 @@ export default function ChatWidget() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages]);
+  }, [availableBranches, messages, selectedBranches]);
 
   useEffect(() => {
     const handleAskAi = (event: Event) => {

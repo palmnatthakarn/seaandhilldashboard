@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { clickhouse } from '@/lib/clickhouse';
 import { getAuthorizedBranches } from '@/lib/api-branch-auth';
 import { formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
+import { resolveBranchSyncName } from '@/lib/branch-names';
 
 type EntitySearchRow = {
   type: 'customer' | 'supplier' | 'product' | 'document';
@@ -155,15 +156,17 @@ export async function GET(request: NextRequest) {
         ORDER BY amount DESC
         LIMIT 5
       `, commonParams),
-      runSearch<EntitySearchRow>(`
+      runSearch<EntitySearchRow & { branchSyncName: string; customerNameRaw: string }>(`
         SELECT
           'document' AS type,
           doc_no AS title,
-          concat('Invoice • ', any(customer_name), ' • ', any(branch_sync_name)) AS subtitle,
+          '' AS subtitle,
           concat('/reports/sales?docNo=', doc_no) AS href,
           sum(total_amount) AS amount,
           count() AS count,
-          toString(max(doc_datetime)) AS latestDate
+          toString(max(doc_datetime)) AS latestDate,
+          any(branch_sync_name) AS branchSyncName,
+          any(customer_name) AS customerNameRaw
         FROM saleinvoice_transaction si
         WHERE status_cancel != 'Cancel'
           AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
@@ -172,16 +175,20 @@ export async function GET(request: NextRequest) {
         GROUP BY doc_no
         ORDER BY latestDate DESC
         LIMIT 5
-      `, commonParams),
-      runSearch<EntitySearchRow>(`
+      `, commonParams).then((rows) =>
+        rows.map((r) => ({ ...r, subtitle: `Invoice • ${r.customerNameRaw} • ${resolveBranchSyncName(r.branchSyncName)}` }))
+      ),
+      runSearch<EntitySearchRow & { branchSyncName: string; supplierNameRaw: string }>(`
         SELECT
           'document' AS type,
           doc_no AS title,
-          concat('PO • ', any(supplier_name), ' • ', any(branch_sync_name)) AS subtitle,
+          '' AS subtitle,
           concat('/reports/purchase?docNo=', doc_no) AS href,
           sum(total_amount) AS amount,
           count() AS count,
-          toString(max(doc_datetime)) AS latestDate
+          toString(max(doc_datetime)) AS latestDate,
+          any(branch_sync_name) AS branchSyncName,
+          any(supplier_name) AS supplierNameRaw
         FROM purchase_transaction pt
         WHERE status_cancel != 'Cancel'
           AND doc_datetime BETWEEN {start_date:String} AND {end_date:String}
@@ -190,7 +197,9 @@ export async function GET(request: NextRequest) {
         GROUP BY doc_no
         ORDER BY latestDate DESC
         LIMIT 5
-      `, commonParams),
+      `, commonParams).then((rows) =>
+        rows.map((r) => ({ ...r, subtitle: `PO • ${r.supplierNameRaw} • ${resolveBranchSyncName(r.branchSyncName)}` }))
+      ),
     ]);
 
     return NextResponse.json({

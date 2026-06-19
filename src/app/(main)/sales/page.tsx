@@ -23,7 +23,7 @@ import { ShoppingCart, DollarSign, TrendingUp, Package } from 'lucide-react';
 import { getDateRange } from '@/lib/dateRanges';
 import Link from 'next/link';
 import { formatGrowthPercentage } from '@/lib/comparison';
-import type { DateRange, SalesKPIs, SalesTrendData, TopProduct, SalesByBranch, SalesByCategory, SalesBySalesperson, TopCustomer, ARStatus } from '@/lib/data/types';
+import type { DateRange, SalesKPIs, SalesTrendData, TopProduct, SalesByBranch, SalesByCategory, SalesByAccount, SalesBySalesperson, TopCustomer, ARStatus } from '@/lib/data/types';
 import {
   getTotalSalesQuery,
   getGrossProfitQuery,
@@ -59,6 +59,7 @@ export default function SalesPage() {
         branchRes,
         categoryRes,
         categorySummaryRes,
+        accountSummaryRes,
         salespersonRes,
         customersRes,
         arRes,
@@ -69,6 +70,7 @@ export default function SalesPage() {
         fetch(`/api/sales/by-branch?${params}`),
         fetch(`/api/sales/by-category?${params}`),
         fetch(`/api/sales/by-category-summary?${params}`),
+        fetch(`/api/sales/by-account-summary?${params}`),
         fetch(`/api/sales/by-salesperson?${params}`),
         fetch(`/api/sales/top-customers?${params}`),
         fetch(`/api/sales/ar-status?${params}`),
@@ -80,17 +82,19 @@ export default function SalesPage() {
       if (!branchRes.ok) throw new Error('Failed to fetch sales by branch');
       if (!categoryRes.ok) throw new Error('Failed to fetch sales by category');
       if (!categorySummaryRes.ok) throw new Error('Failed to fetch sales by category summary');
+      if (!accountSummaryRes.ok) throw new Error('Failed to fetch sales by account summary');
       if (!salespersonRes.ok) throw new Error('Failed to fetch sales by salesperson');
       if (!customersRes.ok) throw new Error('Failed to fetch top customers');
       if (!arRes.ok) throw new Error('Failed to fetch AR status');
 
-      const [kpisData, trendDataRes, productsData, branchData, categoryData, categorySummaryData, salespersonData, customersData, arData] = await Promise.all([
+      const [kpisData, trendDataRes, productsData, branchData, categoryData, categorySummaryData, accountSummaryData, salespersonData, customersData, arData] = await Promise.all([
         kpisRes.json(),
         trendRes.json(),
         productsRes.json(),
         branchRes.json(),
         categoryRes.json(),
         categorySummaryRes.json(),
+        accountSummaryRes.json(),
         salespersonRes.json(),
         customersRes.json(),
         arRes.json(),
@@ -103,6 +107,7 @@ export default function SalesPage() {
         salesByBranch: branchData.data as SalesByBranch[],
         salesByCategory: categoryData.data as SalesByCategory[],
         salesByCategorySummary: categorySummaryData.data as SalesByCategory[],
+        salesByAccountSummary: accountSummaryData.data as SalesByAccount[],
         salesBySalesperson: salespersonData.data as SalesBySalesperson[],
         topCustomers: customersData.data as TopCustomer[],
         arStatus: arData.data as ARStatus[],
@@ -117,6 +122,7 @@ export default function SalesPage() {
   const salesByBranch = data?.salesByBranch || [];
   const salesByCategory = data?.salesByCategory || [];
   const salesByCategorySummaryData = data?.salesByCategorySummary || [];
+  const salesByAccountSummaryData = data?.salesByAccountSummary || [];
   const salesBySalesperson = data?.salesBySalesperson || [];
   const topCustomers = data?.topCustomers || [];
   const arStatus = data?.arStatus || [];
@@ -145,35 +151,18 @@ export default function SalesPage() {
     { key: 'totalSales', label: 'ยอดขายรวม', align: 'right' },
   ];
 
-  const salesByCategorySummary = Array.from(
-    salesByCategory.reduce((map, item) => {
-      const existing = map.get(item.categoryName) || {
-        categoryCode: item.categoryCode,
-        categoryName: item.categoryName,
-        totalQtySold: 0,
-        totalSales: 0,
-      };
-
-      existing.totalQtySold += item.totalQtySold;
-      existing.totalSales += item.totalSales;
-      map.set(item.categoryName, existing);
-      return map;
-    }, new Map<string, { categoryCode: string; categoryName: string; totalQtySold: number; totalSales: number }>())
-      .values()
-  ).sort((a, b) => b.totalSales - a.totalSales);
-
-  const salesCategoryRows: KPIRecordsRow[] = salesByCategorySummary.map((item) => ({
-    id: item.categoryName,
+  const salesCategoryRows: KPIRecordsRow[] = salesByAccountSummaryData.map((item, index) => ({
+    id: `${item.accountCode || 'account'}-${item.accountName || 'name'}-${index}`,
     cells: {
-      categoryCode: item.categoryCode,
+      categoryCode: <span className="font-mono text-xs">{item.accountCode}</span>,
       categoryName: (
         <Link 
-          href={`/reports/sales?report=by-category&categoryCode=${encodeURIComponent(item.categoryCode)}`}
+          href={`/reports/accounting?report=revenue-breakdown`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
         >
-          {item.categoryName}
+          {item.accountName}
         </Link>
       ),
       totalQtySold: item.totalQtySold.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -187,8 +176,8 @@ export default function SalesPage() {
     { key: 'orderCount', label: 'จำนวนออเดอร์', align: 'right' },
   ];
 
-  const salesOrderRows: KPIRecordsRow[] = salesByCategorySummaryData.map((item) => ({
-    id: item.categoryName,
+  const salesOrderRows: KPIRecordsRow[] = salesByCategorySummaryData.map((item, index) => ({
+    id: `${item.categoryCode || 'category'}-${item.categoryName || 'name'}-${index}`,
     cells: {
       categoryCode: <span className="font-mono text-xs">{item.categoryCode}</span>,
       categoryName: (

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       async () => {
         return await getRevenueExpenseData(normalizedBranches, dateRange);
       },
-      ['dashboard', 'revenue-expense', ...normalizedBranches, startDate || '', endDate || ''],
+      ['dashboard', 'revenue-expense-v2-product-detail-total', ...normalizedBranches, startDate || '', endDate || ''],
       CacheDuration.LONG // 10 minutes cache
     );
 

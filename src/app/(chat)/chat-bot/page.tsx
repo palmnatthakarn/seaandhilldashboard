@@ -3,6 +3,7 @@
 import { Send, Loader2, Database, RotateCcw, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import MarkdownRenderer from '@/components/MarkdownRenderer';
+import { useBranchStore } from '@/store/useBranchStore';
 
 interface Message {
   id: string;
@@ -19,6 +20,8 @@ export default function ChatBotPage() {
   const [schemaStatus, setSchemaStatus] = useState<{ tableCount: number; lastUpdated: string | null } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const selectedBranches = useBranchStore((s) => s.selectedBranches);
+  const availableBranches = useBranchStore((s) => s.availableBranches);
 
   // Fetch schema status on mount
   useEffect(() => {
@@ -94,6 +97,10 @@ export default function ChatBotPage() {
             role: m.role,
             content: m.content,
           })),
+          branchContext: {
+            selectedBranches,
+            availableBranches,
+          },
         }),
       });
 

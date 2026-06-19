@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const cachedQuery = createCachedQuery(
       () => getSalesByBranch({ start: startDate, end: endDate }, normalizedBranches),
-      ['sales', 'by-branch', startDate, endDate, ...normalizedBranches],
+      ['sales', 'by-branch-v2-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.MEDIUM
     );
 

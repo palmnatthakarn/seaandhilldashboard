@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
           alerts,
         };
       },
-      ['dashboard', 'overview', ...normalizedBranches, startDate || '', endDate || '', String(salesLimit)],
+      ['dashboard', 'overview-v2-product-detail-total', ...normalizedBranches, startDate || '', endDate || '', String(salesLimit)],
       CacheDuration.SHORT // 1 minute cache
     );
 

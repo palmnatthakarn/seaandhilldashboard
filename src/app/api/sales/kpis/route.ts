@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const cachedQuery = createCachedQuery(
       () => getSalesKPIs({ start: startDate, end: endDate }, normalizedBranches),
-      ['sales', 'kpis', startDate, endDate, ...normalizedBranches],
+      ['sales', 'kpis-v4-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.MEDIUM
     );
 

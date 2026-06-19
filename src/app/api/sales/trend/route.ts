@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const cachedQuery = createCachedQuery(
       () => getSalesTrendData({ start: startDate, end: endDate }, normalizedBranches),
-      ['sales', 'trend', startDate, endDate, ...normalizedBranches],
+      ['sales', 'trend-v2-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.SHORT
     );
 

@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
     const cachedQuery = createCachedQuery(
       () => getTopCustomers({ start: startDate, end: endDate }, normalizedBranches),
-      ['sales', 'top-customers', startDate, endDate, ...normalizedBranches],
+      ['sales', 'top-customers-v2-product-detail-total', startDate, endDate, ...normalizedBranches],
       CacheDuration.MEDIUM
     );
 

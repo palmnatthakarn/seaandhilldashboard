@@ -77,33 +77,12 @@ export function getPreviousPeriod(
       };
     }
 
-    case 'PreviousPeriod': // งวดก่อนหน้า (เดือน/ไตรมาสก่อนหน้า)
+    case 'PreviousPeriod': // งวดก่อนหน้า — ใช้ช่วงเวลาความยาวเท่ากัน ย้อนหลังติดกัน (ตรงกับ Dashboard)
     default: {
-      // ตรวจสอบว่าเป็นช่วงเดือนเต็ม หรือไตรมาส
-      const startDay = start.getDate();
-      const endDay = end.getDate();
-      const lastDayOfEndMonth = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
-      
-      // ถ้าเริ่มวันที่ 1 และจบวันสุดท้ายของเดือน = เป็นช่วงเดือนเต็ม
-      if (startDay === 1 && endDay === lastDayOfEndMonth) {
-        // คำนวณจำนวนเดือน
-        const monthsDiff = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
-        
-        // Previous period = ย้อนหลังไปเท่ากับจำนวนเดือน
-        const prevStart = new Date(start.getFullYear(), start.getMonth() - monthsDiff, 1);
-        const prevEnd = new Date(start.getFullYear(), start.getMonth(), 0); // วันสุดท้ายของเดือนก่อน start
-        
-        return {
-          start: formatDateString(prevStart),
-          end: formatDateString(prevEnd),
-        };
-      }
-      
-      // กรณีอื่น ใช้ MoM logic
-      const prevStart = new Date(start);
-      prevStart.setMonth(prevStart.getMonth() - 1);
-      const prevEnd = new Date(end);
-      prevEnd.setMonth(prevEnd.getMonth() - 1);
+      const msPerDay = 86400000;
+      const durationDays = Math.ceil((end.getTime() - start.getTime()) / msPerDay);
+      const prevEnd = new Date(start.getTime() - msPerDay); // วันก่อน start
+      const prevStart = new Date(prevEnd.getTime() - durationDays * msPerDay);
       return {
         start: formatDateString(prevStart),
         end: formatDateString(prevEnd),

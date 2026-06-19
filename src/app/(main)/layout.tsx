@@ -1,6 +1,5 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getAuthSession } from "@/lib/auth-session";
 import { isEmailAllowed } from "@/lib/auth-allowlist";
 
 export default async function MainRouteLayout({
@@ -8,9 +7,7 @@ export default async function MainRouteLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getAuthSession();
 
   if (!session?.user) {
     redirect("/login");

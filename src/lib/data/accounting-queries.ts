@@ -18,6 +18,28 @@ function buildBranchFilterSql(branches?: string[]): string {
   return `AND branch_sync IN (${branchList})`;
 }
 
+// account_type may be empty string in the CDC pipeline; derive from account_code prefix as fallback
+const ACCOUNT_TYPE_PREFIXES: Record<string, string> = {
+  ASSETS: '1', LIABILITIES: '2', EQUITY: '3', INCOME: '4', EXPENSES: '5',
+};
+
+function accountTypeFilter(types: string[]): string {
+  const parts = types.map(t => {
+    const prefix = ACCOUNT_TYPE_PREFIXES[t];
+    if (prefix) return `(account_type = '${t}' OR (account_type = '' AND left(account_code, 1) = '${prefix}'))`;
+    return `account_type = '${t}'`;
+  });
+  return parts.length === 1 ? parts[0] : `(${parts.join(' OR ')})`;
+}
+
+function reportDateExpr(column = 'doc_datetime'): string {
+  return `date(${column} + INTERVAL 7 HOUR)`;
+}
+
+function reportMonthExpr(column = 'doc_datetime'): string {
+  return `toStartOfMonth(${column} + INTERVAL 7 HOUR)`;
+}
+
 // ============================================================================
 // Query Export Functions (for View SQL Query feature)
 // ============================================================================
@@ -25,17 +47,18 @@ function buildBranchFilterSql(branches?: string[]): string {
 export function getAssetsQuery(dateRange: DateRange, branchSync?: string[]): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
   const branchFilter = buildBranchFilterSql(branchSync);
+  const typeFilter = accountTypeFilter(['ASSETS']);
   return `
     SELECT
       SUM(debit - credit) as current_value,
       (SELECT SUM(debit - credit)
        FROM journal_transaction_detail
-       WHERE account_type = 'ASSETS'
-         AND date(doc_datetime) BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
+       WHERE ${typeFilter}
+         AND ${reportDateExpr()} BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
          ${branchFilter}) as previous_value
     FROM journal_transaction_detail
-    WHERE account_type = 'ASSETS'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${typeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -43,17 +66,18 @@ export function getAssetsQuery(dateRange: DateRange, branchSync?: string[]): str
 export function getLiabilitiesQuery(dateRange: DateRange, branchSync?: string[]): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
   const branchFilter = buildBranchFilterSql(branchSync);
+  const typeFilter = accountTypeFilter(['LIABILITIES']);
   return `
     SELECT
       SUM(credit - debit) as current_value,
       (SELECT SUM(credit - debit)
        FROM journal_transaction_detail
-       WHERE account_type = 'LIABILITIES'
-         AND date(doc_datetime) BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
+       WHERE ${typeFilter}
+         AND ${reportDateExpr()} BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
          ${branchFilter}) as previous_value
     FROM journal_transaction_detail
-    WHERE account_type = 'LIABILITIES'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${typeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -61,17 +85,18 @@ export function getLiabilitiesQuery(dateRange: DateRange, branchSync?: string[])
 export function getEquityQuery(dateRange: DateRange, branchSync?: string[]): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
   const branchFilter = buildBranchFilterSql(branchSync);
+  const typeFilter = accountTypeFilter(['EQUITY']);
   return `
     SELECT
       SUM(credit - debit) as current_value,
       (SELECT SUM(credit - debit)
        FROM journal_transaction_detail
-       WHERE account_type = 'EQUITY'
-         AND date(doc_datetime) BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
+       WHERE ${typeFilter}
+         AND ${reportDateExpr()} BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
          ${branchFilter}) as previous_value
     FROM journal_transaction_detail
-    WHERE account_type = 'EQUITY'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${typeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -79,17 +104,18 @@ export function getEquityQuery(dateRange: DateRange, branchSync?: string[]): str
 export function getRevenueQuery(dateRange: DateRange, branchSync?: string[]): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
   const branchFilter = buildBranchFilterSql(branchSync);
+  const typeFilter = accountTypeFilter(['INCOME']);
   return `
     SELECT
       SUM(credit - debit) as current_value,
       (SELECT SUM(credit - debit)
        FROM journal_transaction_detail
-       WHERE account_type = 'INCOME'
-         AND date(doc_datetime) BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
+       WHERE ${typeFilter}
+         AND ${reportDateExpr()} BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
          ${branchFilter}) as previous_value
     FROM journal_transaction_detail
-    WHERE account_type = 'INCOME'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${typeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -97,17 +123,18 @@ export function getRevenueQuery(dateRange: DateRange, branchSync?: string[]): st
 export function getExpensesQuery(dateRange: DateRange, branchSync?: string[]): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
   const branchFilter = buildBranchFilterSql(branchSync);
+  const typeFilter = accountTypeFilter(['EXPENSES']);
   return `
     SELECT
       SUM(debit - credit) as current_value,
       (SELECT SUM(debit - credit)
        FROM journal_transaction_detail
-       WHERE account_type = 'EXPENSES'
-         AND date(doc_datetime) BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
+       WHERE ${typeFilter}
+         AND ${reportDateExpr()} BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}'
          ${branchFilter}) as previous_value
     FROM journal_transaction_detail
-    WHERE account_type = 'EXPENSES'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${typeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -117,12 +144,12 @@ export function getProfitLossQuery(dateRange: DateRange, branchSync?: string[]):
   const branchFilter = buildBranchFilterSql(branchSync);
   return `
     SELECT
-      toStartOfMonth(doc_datetime) as month,
-      sum(if(account_type = 'INCOME', credit - debit, 0)) as revenue,
-      sum(if(account_type = 'EXPENSES', debit - credit, 0)) as expenses,
-      revenue - expenses as netProfit
+      ${reportMonthExpr()} as month,
+      sum(if(${accountTypeFilter(['INCOME'])}, credit - debit, 0)) as revenue,
+      sum(if(${accountTypeFilter(['EXPENSES'])}, debit - credit, 0)) as expenses,
+      sum(if(${accountTypeFilter(['INCOME'])}, credit - debit, 0)) - sum(if(${accountTypeFilter(['EXPENSES'])}, debit - credit, 0)) as netProfit
     FROM journal_transaction_detail
-    WHERE doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     GROUP BY month
     ORDER BY month ASC
@@ -131,21 +158,28 @@ export function getProfitLossQuery(dateRange: DateRange, branchSync?: string[]):
 
 export function getBalanceSheetQuery(dateRange: DateRange, branchSync?: string[]): string {
   const branchFilter = buildBranchFilterSql(branchSync);
+  const bsFilter = accountTypeFilter(['ASSETS', 'LIABILITIES', 'EQUITY']);
   return `
     SELECT
       substring(account_code, 1, 1) as accountType,
-      account_type,
-      CASE
-        WHEN account_type = 'ASSETS' THEN 'สินทรัพย์'
-        WHEN account_type = 'LIABILITIES' THEN 'หนี้สิน'
-        WHEN account_type = 'EQUITY' THEN 'ส่วนของผู้ถือหุ้น'
-      END as typeName,
+      multiIf(
+        ${accountTypeFilter(['ASSETS'])}, 'ASSETS',
+        ${accountTypeFilter(['LIABILITIES'])}, 'LIABILITIES',
+        ${accountTypeFilter(['EQUITY'])}, 'EQUITY',
+        account_type
+      ) as account_type,
+      multiIf(
+        ${accountTypeFilter(['ASSETS'])}, 'สินทรัพย์',
+        ${accountTypeFilter(['LIABILITIES'])}, 'หนี้สิน',
+        ${accountTypeFilter(['EQUITY'])}, 'ส่วนของผู้ถือหุ้น',
+        account_type
+      ) as typeName,
       account_code,
       account_name,
-      if(account_type = 'ASSETS', sum(debit - credit), sum(credit - debit)) as balance
+      if(${accountTypeFilter(['ASSETS'])}, sum(debit - credit), sum(credit - debit)) as balance
     FROM journal_transaction_detail
-    WHERE (account_type = 'ASSETS' OR account_type = 'LIABILITIES' OR account_type = 'EQUITY')
-      AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${bsFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     GROUP BY account_type, accountType, typeName, account_code, account_name
     ORDER BY account_code ASC
@@ -156,27 +190,27 @@ export function getCashFlowQuery(dateRange: DateRange, branchSync?: string[]): s
   const branchFilter = buildBranchFilterSql(branchSync);
   return `
     SELECT 'Operating' as activityType,
-      sum(if(account_type = 'INCOME', credit - debit, 0)) as revenue,
-      sum(if(account_type = 'EXPENSES', debit - credit, 0)) as expenses,
+      sum(if(${accountTypeFilter(['INCOME'])}, credit - debit, 0)) as revenue,
+      sum(if(${accountTypeFilter(['EXPENSES'])}, debit - credit, 0)) as expenses,
       revenue - expenses as netCashFlow
     FROM journal_transaction_detail
-    WHERE doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
-    
+
     UNION ALL
-    
+
     SELECT 'Investing', 0, sum(debit - credit), -sum(debit - credit)
     FROM journal_transaction_detail
     WHERE account_code LIKE '12%'
-      AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
-    
+
     UNION ALL
-    
+
     SELECT 'Financing', sum(credit - debit), 0, sum(credit - debit)
     FROM journal_transaction_detail
-    WHERE (account_code LIKE '21%' OR account_type = 'EQUITY')
-      AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE (account_code LIKE '21%' OR ${accountTypeFilter(['EQUITY'])})
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
   `;
 }
@@ -205,7 +239,7 @@ export function getARAgingQuery(dateRange: DateRange, branchSync?: string[]): st
     WHERE status_payment IN ('Outstanding', 'Partially Paid')
       AND status_cancel != 'Cancel'
       AND doc_type = 'CREDIT'
-      AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     ORDER BY daysOverdue DESC
     LIMIT 100
@@ -236,7 +270,7 @@ export function getAPAgingQuery(dateRange: DateRange, branchSync?: string[]): st
     WHERE status_payment IN ('Outstanding', 'Partially Paid')
       AND status_cancel != 'Cancel'
       AND doc_type = 'CREDIT'
-      AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     ORDER BY daysOverdue DESC
     LIMIT 100
@@ -245,6 +279,7 @@ export function getAPAgingQuery(dateRange: DateRange, branchSync?: string[]): st
 
 export function getRevenueBreakdownQuery(dateRange: DateRange, branchSync?: string[]): string {
   const branchFilter = buildBranchFilterSql(branchSync);
+  const incomeFilter = accountTypeFilter(['INCOME']);
   return `
     SELECT
       account_code AS accountGroup,
@@ -253,13 +288,13 @@ export function getRevenueBreakdownQuery(dateRange: DateRange, branchSync?: stri
       (amount / (
         SELECT sum(credit - debit)
         FROM journal_transaction_detail
-        WHERE account_type = 'INCOME'
-          AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        WHERE ${incomeFilter}
+          AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
           ${branchFilter}
       )) * 100 AS percentage
     FROM journal_transaction_detail
-    WHERE account_type = 'INCOME'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${incomeFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     GROUP BY account_code, account_name
     HAVING amount != 0
@@ -269,6 +304,7 @@ export function getRevenueBreakdownQuery(dateRange: DateRange, branchSync?: stri
 
 export function getExpenseBreakdownQuery(dateRange: DateRange, branchSync?: string[]): string {
   const branchFilter = buildBranchFilterSql(branchSync);
+  const expensesFilter = accountTypeFilter(['EXPENSES']);
   return `
     SELECT
       account_code AS accountGroup,
@@ -277,13 +313,13 @@ export function getExpenseBreakdownQuery(dateRange: DateRange, branchSync?: stri
       (amount / (
         SELECT sum(debit - credit)
         FROM journal_transaction_detail
-        WHERE account_type = 'EXPENSES'
-          AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        WHERE ${expensesFilter}
+          AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
           ${branchFilter}
       )) * 100 AS percentage
     FROM journal_transaction_detail
-    WHERE account_type = 'EXPENSES'
-      AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${expensesFilter}
+      AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     GROUP BY account_code, account_name
     HAVING amount != 0
@@ -304,7 +340,7 @@ export function getProfitLossByProductCategoryQuery(dateRange: DateRange, branch
         SUM(sum_of_cost) AS sum_of_cost
       FROM saleinvoice_transaction_detail
       WHERE status_cancel != 'Cancel'
-        AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
         ${branchFilter}
       GROUP BY doc_no, branch_sync, item_category_code, item_category_name
     ),
@@ -312,14 +348,19 @@ export function getProfitLossByProductCategoryQuery(dateRange: DateRange, branch
       SELECT
         doc_no,
         branch_sync,
-        account_type,
+        multiIf(
+          ${accountTypeFilter(['INCOME'])}, 'INCOME',
+          ${accountTypeFilter(['EQUITY'])}, 'EQUITY',
+          ${accountTypeFilter(['EXPENSES'])}, 'EXPENSES',
+          account_type
+        ) AS account_type,
         account_code,
         account_name,
         SUM(credit - debit) AS credit_net,
         SUM(debit - credit) AS debit_net
       FROM journal_transaction_detail
-      WHERE account_type IN ('INCOME', 'EQUITY', 'EXPENSES')
-        AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+      WHERE ${accountTypeFilter(['INCOME', 'EQUITY', 'EXPENSES'])}
+        AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
         ${branchFilter}
       GROUP BY doc_no, branch_sync, account_type, account_code, account_name
     )
@@ -345,7 +386,17 @@ export function getProfitLossByProductCategoryQuery(dateRange: DateRange, branch
  */
 export function getAccountTypeQuery(accountCode: string): string {
   return `
-    SELECT DISTINCT account_type
+    SELECT
+      if(account_type != '', account_type,
+        CASE left(account_code, 1)
+          WHEN '1' THEN 'ASSETS'
+          WHEN '2' THEN 'LIABILITIES'
+          WHEN '3' THEN 'EQUITY'
+          WHEN '4' THEN 'INCOME'
+          WHEN '5' THEN 'EXPENSES'
+          ELSE ''
+        END
+      ) AS account_type
     FROM journal_transaction_detail
     WHERE account_code = '${accountCode}'
     LIMIT 1
@@ -359,22 +410,29 @@ export function getChartOfAccountsListQuery(dateRange: DateRange, branchSync?: s
       SELECT DISTINCT doc_no, branch_sync
       FROM saleinvoice_transaction_detail
       WHERE status_cancel != 'Cancel'
-        AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
         ${branchFilter}
     )
     SELECT
       j.account_code AS accountCode,
       j.account_name AS accountName,
-      j.account_type AS accountType,
+      multiIf(
+        ${accountTypeFilter(['INCOME'])}, 'INCOME',
+        ${accountTypeFilter(['EXPENSES'])}, 'EXPENSES',
+        ${accountTypeFilter(['ASSETS'])}, 'ASSETS',
+        ${accountTypeFilter(['LIABILITIES'])}, 'LIABILITIES',
+        ${accountTypeFilter(['EQUITY'])}, 'EQUITY',
+        j.account_type
+      ) AS accountType,
       SUM(j.credit - j.debit) AS netAmount,
       COUNT(DISTINCT j.doc_no) AS docCount
     FROM journal_transaction_detail j
     INNER JOIN sales s ON j.doc_no = s.doc_no AND j.branch_sync = s.branch_sync
-    WHERE date(j.doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+    WHERE ${reportDateExpr('j.doc_datetime')} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
     GROUP BY j.account_code, j.account_name, j.account_type
     HAVING netAmount != 0
-    ORDER BY j.account_type, j.account_code
+    ORDER BY accountType, j.account_code
   `;
 }
 
@@ -399,12 +457,12 @@ export function getAccountProductsQuery(
         account_name
       FROM journal_transaction_detail
       WHERE account_code = '${accountCode}'
-        AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
         ${branchFilter}
         AND (credit - debit) != 0
     )
     SELECT
-      DATE(jd.doc_datetime)                                 AS docDate,
+      DATE(jd.doc_datetime + INTERVAL 7 HOUR)                AS docDate,
       jd.doc_no                                             AS docNo,
       COALESCE(jd.book_name, '-')                          AS bookName,
       COALESCE(jd.branch_name, '-')                        AS branchName,
@@ -449,12 +507,12 @@ export function getAccountPurchaseItemsQuery(
         account_name
       FROM journal_transaction_detail
       WHERE account_code = '${accountCode}'
-        AND date(doc_datetime) BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+        AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
         ${branchFilter}
         AND (credit - debit) != 0
     )
     SELECT
-      DATE(jd.doc_datetime)                                 AS docDate,
+      DATE(jd.doc_datetime + INTERVAL 7 HOUR)                AS docDate,
       jd.doc_no                                             AS docNo,
       COALESCE(jd.book_name, '-')                          AS bookName,
       COALESCE(jd.branch_name, '-')                        AS branchName,

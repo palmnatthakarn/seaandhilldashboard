@@ -5,6 +5,7 @@
 
 import { clickhouse } from '../clickhouse';
 import type { DateRange } from './types';
+import { resolveBranchSyncName } from '../branch-names';
 
 export interface DashboardKPIs {
   totalSales: number;
@@ -68,7 +69,7 @@ function getAlertId(typeId: number, branchSync: string) {
 }
 
 // Helper to build branch filter
-function buildBranchFilter(branches?: string[]): { sql: string; params: Record<string, any> } {
+function buildBranchFilter(branches?: string[]): { sql: string; params: Record<string, unknown> } {
   if (!branches || branches.length === 0 || branches.includes('ALL')) {
     return { sql: '', params: {} };
   }
@@ -84,6 +85,17 @@ function buildBranchFilter(branches?: string[]): { sql: string; params: Record<s
     sql: 'AND branch_sync IN {branchList:Array(String)}',
     params: { branchList: branches }
   };
+}
+
+function buildProductSalesKpiFilter(alias = 'sid'): string {
+  return `
+        AND ${alias}.status_cancel != 'Cancel'
+        AND trim(${alias}.item_code) != ''
+        AND trim(${alias}.item_name) != ''
+        AND ${alias}.qty > 0
+        AND ${alias}.sum_amount > 0
+        AND trim(${alias}.unit_code) != ''
+  `;
 }
 
 /**
@@ -103,37 +115,56 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
 
     const branchFilter = buildBranchFilter(branchSync);
 
-    // ยอดขายช่วงเวลาที่เลือก
-    let salesQuery = `
+    // ยอดขายรวมใช้บรรทัดรายการขายจริง ไม่ใช่ยอดท้ายบิล
+    const revenueQuery = `
+      WITH product_docs AS (
+        SELECT
+          si.branch_sync,
+          si.doc_no,
+          any(si.customer_code) AS customer_code,
+          sum(sid.sum_amount) AS product_sales
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND toDate(si.doc_datetime) >= toDate({startDate:String})
+          AND toDate(si.doc_datetime) <= toDate({endDate:String})
+          ${buildProductSalesKpiFilter('sid')}
+          ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+        GROUP BY si.branch_sync, si.doc_no
+      )
       SELECT
-        sum(total_amount) as currentSales,
-        count(DISTINCT doc_no) as currentOrders,
-        uniq(customer_code) as currentCustomers,
-        avg(total_amount) as currentAvgOrder
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND toDate(doc_datetime) >= toDate({startDate:String})
-        AND toDate(doc_datetime) <= toDate({endDate:String})
-        ${branchFilter.sql}
+        coalesce(sum(product_sales), 0) as currentSales,
+        count() as currentOrders,
+        uniq(customer_code) as currentCustomers
+      FROM product_docs
     `;
 
-    // ยอดขายช่วงเวลาก่อนหน้า
-    let prevSalesQuery = `
+    const prevRevenueQuery = `
+      WITH product_docs AS (
+        SELECT
+          si.branch_sync,
+          si.doc_no,
+          any(si.customer_code) AS customer_code,
+          sum(sid.sum_amount) AS product_sales
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND toDate(si.doc_datetime) >= toDate({prevStartDate:String})
+          AND toDate(si.doc_datetime) <= toDate({prevEndDate:String})
+          ${buildProductSalesKpiFilter('sid')}
+          ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+        GROUP BY si.branch_sync, si.doc_no
+      )
       SELECT
-        sum(total_amount) as prevSales,
-        count(DISTINCT doc_no) as prevOrders,
-        uniq(customer_code) as prevCustomers,
-        avg(total_amount) as prevAvgOrder
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND toDate(doc_datetime) >= toDate({prevStartDate:String})
-        AND toDate(doc_datetime) <= toDate({prevEndDate:String})
-        ${branchFilter.sql}
+        coalesce(sum(product_sales), 0) as prevSales,
+        count() as prevOrders,
+        uniq(customer_code) as prevCustomers
+      FROM product_docs
     `;
 
-    const [currentResult, prevResult] = await Promise.all([
+    const [revenueResult, prevRevenueResult] = await Promise.all([
       clickhouse.query({
-        query: salesQuery,
+        query: revenueQuery,
         query_params: {
           startDate,
           endDate,
@@ -142,7 +173,7 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
         format: 'JSONEachRow',
       }),
       clickhouse.query({
-        query: prevSalesQuery,
+        query: prevRevenueQuery,
         query_params: {
           prevStartDate,
           prevEndDate,
@@ -152,20 +183,20 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
       }),
     ]);
 
-    const currentData = (await currentResult.json())[0] as Record<string, unknown> || {};
-    const prevData = (await prevResult.json())[0] as Record<string, unknown> || {};
+    const revenueData = (await revenueResult.json())[0] as Record<string, unknown> || {};
+    const prevRevenueData = (await prevRevenueResult.json())[0] as Record<string, unknown> || {};
 
     // --- ค่าปัจจุบัน ---
-    const currentSales = Number(currentData.currentSales) || 0;
-    const currentOrders = Number(currentData.currentOrders) || 0;
-    const currentCustomers = Number(currentData.currentCustomers) || 0;
-    const currentAvgOrder = Number(currentData.currentAvgOrder) || 0;
+    const currentSales = Number(revenueData.currentSales) || 0;
+    const currentOrders = Number(revenueData.currentOrders) || 0;
+    const currentCustomers = Number(revenueData.currentCustomers) || 0;
+    const currentAvgOrder = currentOrders > 0 ? Math.round(currentSales / currentOrders) : 0;
 
     // --- ค่า previous period (อาจเป็น 0 ถ้าไม่มีข้อมูล) ---
-    const prevSales = Number(prevData.prevSales) || 0;
-    const prevOrders = Number(prevData.prevOrders) || 0;
-    const prevCustomers = Number(prevData.prevCustomers) || 0;
-    const prevAvgOrder = Number(prevData.prevAvgOrder) || 0;
+    const prevSales = Number(prevRevenueData.prevSales) || 0;
+    const prevOrders = Number(prevRevenueData.prevOrders) || 0;
+    const prevCustomers = Number(prevRevenueData.prevCustomers) || 0;
+    const prevAvgOrder = prevOrders > 0 ? Math.round(prevSales / prevOrders) : 0;
 
     return {
       totalSales: currentSales,
@@ -195,19 +226,27 @@ export async function getSalesChartData(branchSync?: string[], dateRange?: DateR
     const endDate = dateRange?.end || new Date().toISOString().split('T')[0];
     const startDate = dateRange?.start || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    let query = `
+    const query = `
+      WITH product_docs AS (
+        SELECT
+          toDate(si.doc_datetime) as date,
+          si.branch_sync,
+          si.doc_no,
+          sum(sid.sum_amount) AS product_sales
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND toDate(si.doc_datetime) >= toDate({startDate:String})
+          AND toDate(si.doc_datetime) <= toDate({endDate:String})
+          ${buildProductSalesKpiFilter('sid')}
+          ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+        GROUP BY date, si.branch_sync, si.doc_no
+      )
       SELECT
-        toDate(doc_datetime) as date,
-        sum(total_amount) as amount,
-        count(DISTINCT doc_no) as orders
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND toDate(doc_datetime) >= toDate({startDate:String})
-        AND toDate(doc_datetime) <= toDate({endDate:String})
-        ${branchFilter.sql}
-    `;
-
-    query += `
+        date,
+        sum(product_sales) as amount,
+        count() as orders
+      FROM product_docs
       GROUP BY date
       ORDER BY date ASC
     `;
@@ -222,9 +261,9 @@ export async function getSalesChartData(branchSync?: string[], dateRange?: DateR
       format: 'JSONEachRow',
     });
 
-    const data = await result.json();
-    return data.map((row: any) => ({
-      date: row.date,
+    const data = await result.json() as Array<Record<string, unknown>>;
+    return data.map((row) => ({
+      date: String(row.date),
       amount: Number(row.amount) || 0,
       orders: Number(row.orders) || 0,
     }));
@@ -246,19 +285,18 @@ export async function getRevenueExpenseData(branchSync?: string[], dateRange?: D
     const endDate = dateRange?.end || new Date().toISOString().split('T')[0];
     const startDate = dateRange?.start || new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    // Query revenue from sales
-    let revenueQuery = `
+    // Query revenue from actual sold item/detail lines.
+    const revenueQuery = `
       SELECT
-        formatDateTime(toStartOfMonth(doc_datetime), '%Y-%m') as month,
-        sum(total_amount) as revenue
-      FROM saleinvoice_transaction
-      WHERE status_cancel != 'Cancel'
-        AND toDate(doc_datetime) >= toDate({startDate:String})
-        AND toDate(doc_datetime) <= toDate({endDate:String})
-        ${branchFilter.sql}
-    `;
-
-    revenueQuery += `
+        formatDateTime(toStartOfMonth(si.doc_datetime), '%Y-%m') as month,
+        sum(sid.sum_amount) as revenue
+      FROM saleinvoice_transaction_detail sid
+      JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+      WHERE si.status_cancel != 'Cancel'
+        AND toDate(si.doc_datetime) >= toDate({startDate:String})
+        AND toDate(si.doc_datetime) <= toDate({endDate:String})
+        ${buildProductSalesKpiFilter('sid')}
+        ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
       GROUP BY month
       ORDER BY month ASC
     `;
@@ -301,18 +339,18 @@ export async function getRevenueExpenseData(branchSync?: string[], dateRange?: D
       }),
     ]);
 
-    const revenueData = await revenueResult.json();
-    const expenseData = await expenseResult.json();
+    const revenueData = await revenueResult.json() as Array<Record<string, unknown>>;
+    const expenseData = await expenseResult.json() as Array<Record<string, unknown>>;
 
     // Create a map of expenses by month
     const expenseMap = new Map<string, number>();
-    expenseData.forEach((row: any) => {
-      expenseMap.set(row.month, Number(row.expense) || 0);
+    expenseData.forEach((row) => {
+      expenseMap.set(String(row.month), Number(row.expense) || 0);
     });
 
     // Combine revenue and expense data
-    const combined: RevenueExpenseData[] = revenueData.map((row: any) => {
-      const month = row.month;
+    const combined: RevenueExpenseData[] = revenueData.map((row) => {
+      const month = String(row.month);
       const revenue = Number(row.revenue) || 0;
       const expense = expenseMap.get(month) || 0;
       return {
@@ -324,8 +362,8 @@ export async function getRevenueExpenseData(branchSync?: string[], dateRange?: D
     });
 
     // Add any months that have expenses but no revenue
-    expenseData.forEach((row: any) => {
-      const month = row.month;
+    expenseData.forEach((row) => {
+      const month = String(row.month);
       if (!combined.find((item: RevenueExpenseData) => item.month === month)) {
         const expense = Number(row.expense) || 0;
         combined.push({
@@ -389,14 +427,14 @@ export async function getRecentSales(branchSync?: string[], dateRange?: DateRang
       format: 'JSONEachRow',
     });
 
-    const data = await result.json();
-    return data.map((row: any) => ({
-      docNo: row.docNo,
-      customerName: row.customerName || 'ไม่ระบุ',
+    const data = await result.json() as Array<Record<string, unknown>>;
+    return data.map((row) => ({
+      docNo: String(row.docNo),
+      customerName: String(row.customerName || 'ไม่ระบุ'),
       totalAmount: Number(row.totalAmount) || 0,
-      docDate: row.docDate,
-      statusPayment: row.statusPayment || 'รอชำระ',
-      branchName: row.branchName || '',
+      docDate: String(row.docDate),
+      statusPayment: String(row.statusPayment || 'รอชำระ'),
+      branchName: resolveBranchSyncName(String(row.branchName || '')) || '',
     }));
   } catch (error) {
     console.error('Error fetching recent sales:', error);
@@ -512,7 +550,7 @@ export async function getDashboardAlerts(branchSync?: string[], dateRange?: Date
     const branchNameMap: Record<string, string> = {};
     branchNameRows.forEach((row) => {
       if (row.branch_sync) {
-        branchNameMap[row.branch_sync] = row.branch_sync_name || `กิจการ ${row.branch_sync}`;
+        branchNameMap[row.branch_sync] = resolveBranchSyncName(row.branch_sync_name) || `กิจการ ${row.branch_sync}`;
       }
     });
 

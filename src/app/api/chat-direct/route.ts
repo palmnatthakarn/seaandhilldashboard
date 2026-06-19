@@ -2,10 +2,103 @@ import { GoogleGenerativeAI, Tool } from '@google/generative-ai';
 import { getClickHouse } from '@/lib/clickhouse';
 import { getSchemaForPrompt } from '@/lib/schemaCache';
 import { buildSystemInstruction } from '@/lib/systemInstruction';
+import { filterBranchesForCurrentUser, normalizeBranches } from '@/lib/auth-policy';
+import { resolveBranchName } from '@/lib/branch-names';
 
 export const maxDuration = 60;
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY!);
+
+type ChatMessage = {
+  role: string;
+  content: string;
+};
+
+type BranchInfo = {
+  key: string;
+  name: string;
+};
+
+type BranchContextPayload = {
+  selectedBranches?: unknown;
+  availableBranches?: unknown;
+};
+
+type BranchScope = {
+  mode: 'all' | 'filtered';
+  branches: BranchInfo[];
+};
+
+function readBranchKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return ['ALL'];
+  const keys = value.filter((branch): branch is string => typeof branch === 'string');
+  return normalizeBranches(keys.length > 0 ? keys : ['ALL']);
+}
+
+function readAvailableBranches(value: unknown): BranchInfo[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((branch): branch is BranchInfo => {
+      if (!branch || typeof branch !== 'object') return false;
+      const maybeBranch = branch as Record<string, unknown>;
+      return typeof maybeBranch.key === 'string' && typeof maybeBranch.name === 'string';
+    })
+    .map((branch) => ({
+      key: branch.key,
+      name: branch.name,
+    }));
+}
+
+async function buildBranchScope(payload?: BranchContextPayload): Promise<BranchScope> {
+  const requestedBranches = readBranchKeys(payload?.selectedBranches);
+  const availableBranches = readAvailableBranches(payload?.availableBranches);
+  const authorizedBranches = await filterBranchesForCurrentUser(requestedBranches);
+  const normalizedAuthorizedBranches = normalizeBranches(authorizedBranches);
+
+  if (normalizedAuthorizedBranches.includes('ALL') || normalizedAuthorizedBranches.includes('*')) {
+    return { mode: 'all', branches: [] };
+  }
+
+  return {
+    mode: 'filtered',
+    branches: normalizedAuthorizedBranches.map((key) => ({
+      key,
+      name: availableBranches.find((branch) => branch.key === key)?.name || resolveBranchName(key),
+    })),
+  };
+}
+
+function buildBranchInstruction(scope: BranchScope): string {
+  if (scope.mode === 'all') {
+    return `
+=== CURRENT BRANCH SCOPE ===
+ผู้ใช้เลือก: ทุกกิจการ
+- ตอบจากข้อมูลรวมทุกกิจการได้
+=== END BRANCH SCOPE ===`;
+  }
+
+  const branchList = scope.branches.map((branch) => `${branch.key} = ${branch.name}`).join('\n');
+  const sqlList = scope.branches.map((branch) => `'${branch.key}'`).join(', ');
+
+  return `
+=== CURRENT BRANCH SCOPE ===
+ผู้ใช้เลือกกิจการเฉพาะ:
+${branchList}
+
+กฎบังคับ:
+- ทุก SELECT ที่อ่าน table ที่มี column branch_sync ต้องกรองด้วย branch_sync ตามรายการนี้เท่านั้น
+- ใช้เงื่อนไข: branch_sync IN (${sqlList})
+- ถ้า query มี alias ให้ใช้ alias.branch_sync IN (${sqlList})
+- ห้ามตอบภาพรวมทุกกิจการ เว้นแต่ผู้ใช้ขอเปรียบเทียบ/รวมทุกกิจการอย่างชัดเจน
+- ในคำตอบภาษาไทย ให้บอกว่าข้อมูลนี้อยู่ภายใต้กิจการที่เลือก
+=== END BRANCH SCOPE ===`;
+}
+
+function sqlMentionsSelectedBranchScope(sql: string, scope: BranchScope): boolean {
+  if (scope.mode === 'all') return true;
+  const lowerSql = sql.toLowerCase();
+  return scope.branches.every((branch) => lowerSql.includes(branch.key.toLowerCase()));
+}
 
 // Tool definitions for Gemini - Only executeQuery and webSearch (schema is cached in system prompt)
 const tools = [
@@ -124,23 +217,33 @@ async function performWebSearch(query: string): Promise<{
 }
 
 // Tool execution functions
-async function executeTool(name: string, args: Record<string, unknown>) {
+async function executeTool(name: string, args: Record<string, unknown>, branchScope: BranchScope) {
   switch (name) {
     case 'executeQuery': {
-      const sql = (args.sql as string).trim().toUpperCase();
-      if (!sql.startsWith('SELECT')) {
+      const rawSql = (args.sql as string).trim();
+      const normalizedSql = rawSql.toUpperCase();
+      if (!normalizedSql.startsWith('SELECT')) {
         return { error: 'Only SELECT queries allowed' };
+      }
+
+      if (!sqlMentionsSelectedBranchScope(rawSql, branchScope)) {
+        const selectedBranchList = branchScope.branches.map((branch) => branch.key).join(', ');
+        return {
+          error: `The current dashboard branch scope is ${selectedBranchList}. Rewrite the SELECT query so every table that has branch_sync is filtered by the selected branch scope.`,
+          selectedBranches: branchScope.branches,
+          suggestion: 'Add WHERE branch_sync IN (...) or alias.branch_sync IN (...) using only the selected branch_sync values, then try again.',
+        };
       }
 
       try {
         const clickhouse = await getClickHouse();
         const result = await clickhouse.query({
-          query: args.sql as string,
+          query: rawSql,
           format: 'JSONEachRow',
         });
         const data = await result.json();
         return {
-          query: args.sql as string,
+          query: rawSql,
           rowCount: (data as unknown[]).length,
           data: (data as unknown[]).slice(0, 100),
           message: `Query returned ${(data as unknown[]).length} rows`,
@@ -151,7 +254,7 @@ async function executeTool(name: string, args: Record<string, unknown>) {
         console.error('[Tool] executeQuery error:', errorMsg);
         return {
           error: `SQL Error: ${errorMsg}`,
-          failedQuery: args.sql as string,
+          failedQuery: rawSql,
           suggestion:
             'Please check table/column names from the schema provided in system instructions, then try again with correct names.',
         };
@@ -170,16 +273,17 @@ async function executeTool(name: string, args: Record<string, unknown>) {
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    const { messages, branchContext } = await req.json();
+    const branchScope = await buildBranchScope(branchContext);
 
     // Get cached schema for system prompt
     const schemaText = await getSchemaForPrompt();
 
     // Build system instruction from template
-    const systemInstruction = buildSystemInstruction(schemaText);
+    const systemInstruction = buildSystemInstruction(schemaText, buildBranchInstruction(branchScope));
 
     // Convert messages to Gemini format
-    const geminiMessages = messages.map((msg: { role: string; content: string }) => ({
+    const geminiMessages = (messages as ChatMessage[]).map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }],
     }));
@@ -235,7 +339,7 @@ export async function POST(req: Request) {
 
           const functionResponses = [];
           for (const call of functionCalls) {
-            const toolResult = await executeTool(call.name, call.args as Record<string, unknown>);
+            const toolResult = await executeTool(call.name, call.args as Record<string, unknown>, branchScope);
             functionResponses.push({
               functionResponse: {
                 name: call.name,

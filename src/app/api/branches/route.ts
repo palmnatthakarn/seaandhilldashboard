@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { clickhouse } from '@/lib/clickhouse';
 import { getCurrentBranchPolicy } from '@/lib/auth-policy';
 import { ErrorTypes, formatErrorResponse, getErrorStatusCode, logError } from '@/lib/errors';
+import { resolveBranchName } from '@/lib/branch-names';
 
 export async function GET() {
     try {
@@ -14,7 +15,7 @@ export async function GET() {
         }
 
         const query = `
-            SELECT branch_sync, any(branch_sync_name) as branch_sync_name
+            SELECT branch_sync
             FROM saleinvoice_transaction
             WHERE branch_sync != ''
             GROUP BY branch_sync
@@ -29,9 +30,9 @@ export async function GET() {
         const data = await result.json();
         const allBranches = [
             { key: 'ALL', name: 'ทุกกิจการ' },
-            ...data.map((row: { branch_sync: string; branch_sync_name: string }) => ({
+            ...data.map((row: { branch_sync: string }) => ({
                 key: row.branch_sync,
-                name: row.branch_sync_name || `กิจการ ${row.branch_sync}`,
+                name: resolveBranchName(row.branch_sync),
             })),
         ];
 

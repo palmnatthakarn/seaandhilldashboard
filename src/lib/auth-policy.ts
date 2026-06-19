@@ -1,6 +1,5 @@
 import { randomUUID } from "crypto";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { getAuthSession } from "@/lib/auth-session";
 import { authDbClient, ensureAuthUserPolicyColumns } from "@/lib/auth-db";
 import { ErrorTypes } from "@/lib/errors";
 
@@ -182,9 +181,7 @@ export async function isEmailAllowed(email?: string | null) {
 }
 
 export async function getCurrentSessionUser() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const session = await getAuthSession();
 
   return session?.user ?? null;
 }

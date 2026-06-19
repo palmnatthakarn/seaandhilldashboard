@@ -23,6 +23,7 @@ export function TopProductsTable({ data, height = '400px' }: TopProductsChartPro
     subLabel: `${item.brandName} • ${item.categoryName}`,
     extraData: {
       totalQtySold: item.totalQtySold,
+      unitCode: item.unitCode,
       profitMarginPct: item.profitMarginPct,
       brandName: item.brandName,
       categoryName: item.categoryName,
@@ -41,7 +42,7 @@ export function TopProductsTable({ data, height = '400px' }: TopProductsChartPro
         <div style="margin-top: 8px;">
           <div>ยอดขาย: <b style="color: #3b82f6;">${fmtFull(item.value)}</b></div>
           <div>สัดส่วน: <b>${percentage}%</b> ของ Top 10</div>
-          <div>จำนวนขาย: <b>${fmtCount(extra.totalQtySold || 0)}</b> ชิ้น</div>
+          <div>จำนวนขาย: <b>${fmtCount(extra.totalQtySold || 0)}</b> ${extra.unitCode || 'ชิ้น'}</div>
           <div>กำไรขั้นต้น: <b style="color: ${profitColor};">${(extra.profitMarginPct || 0).toFixed(1)}%</b></div>
         </div>
       </div>

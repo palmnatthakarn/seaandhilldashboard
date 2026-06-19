@@ -14,6 +14,40 @@ function buildBranchFilterSql(branches?: string[]): string {
   return `AND branch_sync IN (${branchList})`;
 }
 
+const ACCOUNT_TYPE_PREFIXES: Record<string, string> = {
+  INCOME: '4', EXPENSES: '5', ASSETS: '1', LIABILITIES: '2', EQUITY: '3',
+};
+
+type DetailRow = {
+  docDate?: string;
+  docNo?: string;
+  accountCode?: string;
+  accountName?: string;
+  bookName?: string;
+  branchName?: string;
+  debit?: number | string;
+  credit?: number | string;
+  amount?: number | string;
+  itemCode?: string;
+  itemName?: string;
+  categoryCode?: string;
+  categoryName?: string;
+  unitCode?: string;
+  qty?: number | string;
+  price?: number | string;
+  itemAmount?: number | string;
+};
+
+function accountTypeFilter(type: string): string {
+  const prefix = ACCOUNT_TYPE_PREFIXES[type];
+  if (!prefix) return `account_type = '${type}'`;
+  return `(account_type = '${type}' OR (account_type = '' AND left(account_code, 1) = '${prefix}'))`;
+}
+
+function reportDateExpr(column = 'doc_datetime'): string {
+  return `date(${column} + INTERVAL 7 HOUR)`;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -56,13 +90,13 @@ export async function GET(request: Request) {
           account_code,
           account_name
         FROM journal_transaction_detail
-        WHERE account_type = '${accountType}'
-          AND date(doc_datetime) BETWEEN '${startDate}' AND '${endDate}'
+        WHERE ${accountTypeFilter(accountType)}
+          AND ${reportDateExpr()} BETWEEN '${startDate}' AND '${endDate}'
           ${branchFilter}
           AND (credit - debit) != 0
       )
       SELECT
-        DATE(jd.doc_datetime)                                 AS docDate,
+        DATE(jd.doc_datetime + INTERVAL 7 HOUR)                AS docDate,
         jd.doc_no                                             AS docNo,
         jd.account_code                                       AS accountCode,
         jd.account_name                                       AS accountName,
@@ -105,8 +139,8 @@ export async function GET(request: Request) {
     const cachedQuery = createCachedQuery(
       async () => {
         const result = await clickhouse.query({ query, format: 'JSONEachRow' });
-        const data = await result.json();
-        return data.map((row: any) => ({
+        const data = await result.json() as DetailRow[];
+        return data.map((row) => ({
           docDate: row.docDate ?? '',
           docNo: row.docNo ?? '',
           accountCode: row.accountCode ?? '',
@@ -126,7 +160,7 @@ export async function GET(request: Request) {
           itemAmount: Number(row.itemAmount ?? 0),
         }));
       },
-      ['reports', 'accounting', 'all-details', accountType, startDate, endDate, ...branches],
+      ['reports', 'accounting', 'all-details-v2-thai-date', accountType, startDate, endDate, ...branches],
       CacheDuration.MEDIUM
     );
 
