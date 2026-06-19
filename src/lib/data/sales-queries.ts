@@ -7,20 +7,48 @@ import { getPreviousPeriod } from '@/lib/comparison';
 // SQL Query Functions - Generate queries with actual dates
 // ============================================
 
+function getSellableItemWhere(alias = 'sid'): string {
+  return `
+  AND ${alias}.status_cancel != 'Cancel'
+  AND trim(${alias}.item_code) != ''
+  AND trim(${alias}.item_name) != ''
+  AND ${alias}.qty > 0
+  AND ${alias}.sum_amount > 0
+  AND trim(${alias}.unit_code) != ''
+  AND (${alias}.unit_code != 'บาท' OR ${alias}.item_code = 'RR-0001')
+  AND (NOT startsWith(${alias}.item_code, 'RR-') OR ${alias}.item_code = 'RR-0001')`;
+}
+
+function getProductSalesKpiWhere(alias = 'sid'): string {
+  return `
+  AND ${alias}.status_cancel != 'Cancel'
+  AND trim(${alias}.item_code) != ''
+  AND trim(${alias}.item_name) != ''
+  AND ${alias}.qty > 0
+  AND ${alias}.sum_amount > 0
+  AND trim(${alias}.unit_code) != ''`;
+}
+
 /**
  * Get Total Sales KPI Query
  */
 export function getTotalSalesQuery(dateRange: DateRange): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
+  const startDate = dateRange.start;
+  const endDate = dateRange.end;
+  const previousStartDate = previousPeriod.start;
+  const previousEndDate = previousPeriod.end;
+
   return `SELECT
   sum(total_amount) as current_value,
   (SELECT sum(total_amount)
    FROM saleinvoice_transaction
    WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}') as previous_value
+     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+  ) as previous_value
 FROM saleinvoice_transaction
 WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
+  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
 }
 
 /**
@@ -28,17 +56,24 @@ WHERE status_cancel != 'Cancel'
  */
 export function getGrossProfitQuery(dateRange: DateRange): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
+  const startDate = `${dateRange.start} 00:00:00`;
+  const endDate = `${dateRange.end} 23:59:59`;
+  const previousStartDate = `${previousPeriod.start} 00:00:00`;
+  const previousEndDate = `${previousPeriod.end} 23:59:59`;
+
   return `SELECT
-  sum(sid.sum_amount - sid.sum_of_cost) as current_value,
-  (SELECT sum(sid2.sum_amount - sid2.sum_of_cost)
+  coalesce(sum(sid.sum_amount - sid.sum_of_cost), 0) as current_value,
+  (SELECT coalesce(sum(sid2.sum_amount - sid2.sum_of_cost), 0)
    FROM saleinvoice_transaction_detail sid2
    JOIN saleinvoice_transaction si2 ON sid2.doc_no = si2.doc_no AND sid2.branch_sync = si2.branch_sync
    WHERE si2.status_cancel != 'Cancel'
-     AND si2.doc_datetime BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}') as previous_value
+     AND si2.doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+${getProductSalesKpiWhere('sid2')}) as previous_value
 FROM saleinvoice_transaction_detail sid
 JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
 WHERE si.status_cancel != 'Cancel'
-  AND si.doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
+  AND si.doc_datetime BETWEEN '${startDate}' AND '${endDate}'
+${getProductSalesKpiWhere('sid')}`;
 }
 
 /**
@@ -46,15 +81,21 @@ WHERE si.status_cancel != 'Cancel'
  */
 export function getTotalOrdersQuery(dateRange: DateRange): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
+  const startDate = dateRange.start;
+  const endDate = dateRange.end;
+  const previousStartDate = previousPeriod.start;
+  const previousEndDate = previousPeriod.end;
+
   return `SELECT
   count(DISTINCT doc_no) as current_value,
   (SELECT count(DISTINCT doc_no)
    FROM saleinvoice_transaction
    WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}') as previous_value
+     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+  ) as previous_value
 FROM saleinvoice_transaction
 WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
+  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
 }
 
 /**
@@ -62,15 +103,21 @@ WHERE status_cancel != 'Cancel'
  */
 export function getAvgOrderValueQuery(dateRange: DateRange): string {
   const previousPeriod = getPreviousPeriod(dateRange, 'PreviousPeriod');
+  const startDate = dateRange.start;
+  const endDate = dateRange.end;
+  const previousStartDate = previousPeriod.start;
+  const previousEndDate = previousPeriod.end;
+
   return `SELECT
   avg(total_amount) as current_value,
   (SELECT avg(total_amount)
    FROM saleinvoice_transaction
    WHERE status_cancel != 'Cancel'
-     AND doc_datetime BETWEEN '${previousPeriod.start}' AND '${previousPeriod.end}') as previous_value
+     AND doc_datetime BETWEEN '${previousStartDate}' AND '${previousEndDate}'
+  ) as previous_value
 FROM saleinvoice_transaction
 WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
+  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'`;
 }
 
 /**
@@ -79,12 +126,14 @@ WHERE status_cancel != 'Cancel'
 export function getSalesTrendQuery(startDate: string, endDate: string): string {
   return `
 SELECT
-  toStartOfDay(doc_datetime) as date,
-  sum(total_amount) as sales,
-  count(DISTINCT doc_no) as orderCount
-FROM saleinvoice_transaction
-WHERE status_cancel != 'Cancel'
-  AND doc_datetime BETWEEN '${startDate}' AND '${endDate}'
+  toStartOfDay(si.doc_datetime) as date,
+  sum(sid.sum_amount) as sales,
+  count(DISTINCT concat(si.branch_sync, ':', si.doc_no)) as orderCount
+FROM saleinvoice_transaction_detail sid
+JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+WHERE si.status_cancel != 'Cancel'
+  AND si.doc_datetime BETWEEN '${startDate}' AND '${endDate}'
+${getProductSalesKpiWhere('sid')}
 GROUP BY date
 ORDER BY date ASC
   `.trim();
@@ -98,6 +147,7 @@ export function getTopProductsQuery(startDate: string, endDate: string): string 
 SELECT
   sid.item_code as itemCode,
   sid.item_name as itemName,
+  sid.unit_code as unitCode,
   sid.item_brand_name as brandName,
   sid.item_category_name as categoryName,
   sum(sid.qty) as totalQtySold,
@@ -107,10 +157,10 @@ SELECT
 FROM saleinvoice_transaction_detail sid
 JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
 WHERE si.status_cancel != 'Cancel'
-  AND si.doc_datetime BETWEEN '${startDate}' AND '${endDate}'
-GROUP BY sid.item_code, sid.item_name, sid.item_brand_name, sid.item_category_name
+  AND si.doc_datetime BETWEEN '${startDate} 00:00:00' AND '${endDate} 23:59:59'
+${getSellableItemWhere('sid')}
+GROUP BY sid.item_code, sid.item_name, sid.unit_code, sid.item_brand_name, sid.item_category_name
 ORDER BY totalSales DESC
-LIMIT 10
   `.trim();
 }
 
