@@ -124,7 +124,7 @@ function clampDateRange(range: DateRange, bounds: DateRange): DateRange {
 }
 
 function getPeriodDateRange(periodKey: string, periodType: import('@/components/ReportPeriodFilter').PeriodType, bounds: DateRange): DateRange {
-  if (!periodKey) return bounds;
+  if (!periodKey || periodKey === '__all__') return bounds;
 
   if (periodType === 'yearly') {
     return clampDateRange({ start: `${periodKey}-01-01`, end: `${periodKey}-12-31` }, bounds);
@@ -316,8 +316,8 @@ function PurchaseReportContent() {
     if (purchaseFilter.viewMode === 'comparison' && (purchaseFilter.compareA || purchaseFilter.compareB)) {
       return trendData.filter((r) => {
         const key = getPeriodKey(r.month.substring(0, 7), purchaseFilter.periodType);
-        return (purchaseFilter.compareA && key === purchaseFilter.compareA) ||
-               (purchaseFilter.compareB && key === purchaseFilter.compareB);
+        return (purchaseFilter.compareA && (purchaseFilter.compareA === '__all__' || key === purchaseFilter.compareA)) ||
+               (purchaseFilter.compareB && (purchaseFilter.compareB === '__all__' || key === purchaseFilter.compareB));
       });
     }
     return trendData;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useDateRangeStore } from '@/store/useDateRangeStore';
 import { motion } from 'framer-motion';
@@ -13,6 +13,8 @@ import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { PaginatedTable, type ColumnDef } from '@/components/PaginatedTable';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { ReportTypeSelector, type ReportOption } from '@/components/ReportTypeSelector';
+import { ReportPeriodFilter, getMonthsFromDateRange } from '@/components/ReportPeriodFilter';
+import { useReportPeriodFilter } from '@/hooks/useReportPeriodFilter';
 import { ProfitLossDetailTable, type PLDetailRow } from '@/components/accounting/ProfitLossDetailTable';
 import {
   TrendingDown,
@@ -110,6 +112,8 @@ const reportOptions: ReportOption<ReportType>[] = [
   },
 ];
 
+const periodFilterReports = new Set<ReportType>(['profit-loss']);
+
 function AccountingReportContent() {
   const { dateRange, setDateRange } = useDateRangeStore();
   const searchParams = useSearchParams();
@@ -135,15 +139,13 @@ function AccountingReportContent() {
     return searchParams.get('accountCode') || '';
   });
 
-  const [plViewMode, setPlViewMode] = useState<'normal' | 'comparison'>('normal');
-  const [plPeriodType, setPlPeriodType] = useState<'monthly' | 'quarterly' | 'half-yearly' | 'yearly'>('monthly');
-  const [plSelectedPeriods, setPlSelectedPeriods] = useState<string[]>([]);
-  const [plCompareA, setPlCompareA] = useState<string>('');
-  const [plCompareB, setPlCompareB] = useState<string>('');
+  const { filter: plFilter, setFilter: setPlFilter } = useReportPeriodFilter();
+  const showPeriodFilter = periodFilterReports.has(selectedReport);
 
   // Reset selected account code when switching away from revenue-breakdown / expense-breakdown / chart-of-accounts or when filters change
   useEffect(() => {
     if (selectedReport !== 'chart-of-accounts' && selectedReport !== 'revenue-breakdown' && selectedReport !== 'expense-breakdown') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedAccountCode('');
     }
   }, [selectedReport, dateRange, selectedBranches]);
@@ -152,6 +154,7 @@ function AccountingReportContent() {
   useEffect(() => {
     const reportFromUrl = searchParams.get('report');
     if (reportFromUrl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSelectedReport(reportFromUrl as ReportType);
     }
     const accountCodeFromUrl = searchParams.get('accountCode');
@@ -224,6 +227,26 @@ function AccountingReportContent() {
   const expenseBreakdown: CategoryBreakdown[] = (selectedReport === 'expense-breakdown' || selectedReport === 'revenue-breakdown') ? (reportData?.expenses || []) : [];
   const chartOfAccountsList: ChartOfAccountItem[] = selectedReport === 'chart-of-accounts' ? (reportData || []) : [];
 
+  const revenueAccountCodes = useMemo(
+    () => new Set(revenueBreakdown.map((acc) => acc.accountGroup).filter(Boolean)),
+    [revenueBreakdown]
+  );
+  const expenseAccountCodes = useMemo(
+    () => new Set(expenseBreakdown.map((acc) => acc.accountGroup).filter(Boolean)),
+    [expenseBreakdown]
+  );
+
+  useEffect(() => {
+    if (!selectedAccountCode) return;
+    if (selectedReport === 'revenue-breakdown' && revenueBreakdown.length > 0 && !revenueAccountCodes.has(selectedAccountCode)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedAccountCode('');
+    }
+    if (selectedReport === 'expense-breakdown' && expenseBreakdown.length > 0 && !expenseAccountCodes.has(selectedAccountCode)) {
+      setSelectedAccountCode('');
+    }
+  }, [selectedReport, selectedAccountCode, revenueBreakdown.length, expenseBreakdown.length, revenueAccountCodes, expenseAccountCodes]);
+
   // ---- Detailed P&L (by account code + month) ----
   const { data: plDetailRows = [], isLoading: plDetailLoading } = useQuery<PLDetailRow[]>({
     queryKey: ['plDetail', dateRange, selectedBranches],
@@ -235,18 +258,29 @@ function AccountingReportContent() {
       const res = await fetch(`/api/accounting/profit-loss-detail?${params}`);
       if (!res.ok) throw new Error('Failed to fetch P&L detail');
       const json = await res.json();
-      return (json.data || []).map((r: any) => ({
-        branchKey: r.branchKey,
-        accountType: r.accountType,
-        accountCode: r.accountCode,
-        accountName: r.accountName,
-        plGroup: r.plGroup || r.accountType,
-        month: r.month,
+      return ((json.data || []) as Array<Record<string, unknown>>).map((r) => ({
+        branchKey: String(r.branchKey),
+        accountType: String(r.accountType),
+        accountCode: String(r.accountCode),
+        accountName: String(r.accountName),
+        plGroup: String(r.plGroup || r.accountType),
+        month: String(r.month),
         amount: Number(r.amount) || 0,
       })) as PLDetailRow[];
     },
     enabled: selectedReport === 'profit-loss',
   });
+
+  // Available months for period filter
+  const accountingAvailableMonths = useMemo(() => {
+    if (selectedReport === 'profit-loss' && plDetailRows.length > 0)
+      return Array.from(new Set(plDetailRows.map((r) => r.month))).filter(Boolean);
+    if (selectedReport === 'ar-aging' && arAgingData.length > 0)
+      return Array.from(new Set(arAgingData.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
+    if (selectedReport === 'ap-aging' && apAgingData.length > 0)
+      return Array.from(new Set(apAgingData.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
+    return getMonthsFromDateRange(dateRange.start, dateRange.end);
+  }, [selectedReport, plDetailRows, arAgingData, apAgingData, dateRange]);
 
   // Separate query for account products (triggered when user selects an account)
   const { data: accountProducts, isLoading: productsLoading } = useQuery<AccountProductItem[]>({
@@ -560,11 +594,11 @@ function AccountingReportContent() {
           <ProfitLossDetailTable
             rows={plDetailRows}
             loading={plDetailLoading}
-            viewMode={plViewMode}
-            periodType={plPeriodType}
-            selectedPeriods={plSelectedPeriods}
-            comparePeriodA={plCompareA}
-            comparePeriodB={plCompareB}
+            viewMode={plFilter.viewMode}
+            periodType={plFilter.periodType}
+            selectedPeriods={plFilter.selectedPeriod ? [plFilter.selectedPeriod] : []}
+            comparePeriodA={plFilter.compareA}
+            comparePeriodB={plFilter.compareB}
             branches={selectedBranches.includes('ALL')
               ? availableBranches
               : availableBranches.filter((branch) => selectedBranches.includes(branch.key))}
@@ -1556,7 +1590,7 @@ function AccountingReportContent() {
       case 'profit-loss': {
         // Period filtering helpers (same logic as ProfitLossDetailTable)
         const getPeriodKey = (monthStr: string) => {
-          if (plPeriodType === 'yearly') return monthStr.substring(0, 4);
+          if (plFilter.periodType === 'yearly') return monthStr.substring(0, 4);
           return monthStr;
         };
         const getQuarterStr = (monthStr: string) => {
@@ -1571,10 +1605,11 @@ function AccountingReportContent() {
           return `${y}-H${m <= 6 ? 1 : 2}`;
         };
         const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
-          if (plPeriodType === 'quarterly') {
+          if (filterStr === '__all__') return true;
+          if (plFilter.periodType === 'quarterly') {
             return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
           }
-          if (plPeriodType === 'half-yearly') {
+          if (plFilter.periodType === 'half-yearly') {
             return pKey.includes('-') && getHalfYearStr(pKey) === filterStr;
           }
           return pKey === filterStr;
@@ -1588,21 +1623,19 @@ function AccountingReportContent() {
         let periodsA: string[] = [];
         let periodsB: string[] = [];
 
-        if (plViewMode === 'normal') {
-          if (plSelectedPeriods.length > 0) {
-            displayPeriods = allAvailableKeys.filter((p) =>
-              plSelectedPeriods.some((filter) => isKeyInPeriodFilter(p, filter))
-            );
+        if (plFilter.viewMode === 'normal') {
+          if (plFilter.selectedPeriod) {
+            displayPeriods = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.selectedPeriod));
           } else {
             displayPeriods = allAvailableKeys;
           }
         } else {
           // comparison mode
-          if (plCompareA) {
-            periodsA = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plCompareA));
+          if (plFilter.compareA) {
+            periodsA = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.compareA));
           }
-          if (plCompareB) {
-            periodsB = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plCompareB));
+          if (plFilter.compareB) {
+            periodsB = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.compareB));
           }
           displayPeriods = [...periodsA, ...periodsB];
         }
@@ -1610,7 +1643,7 @@ function AccountingReportContent() {
         const allMonthsExport = displayPeriods;
         const empty = (m: string) => [m, ''] as [string, string];
         const formatPeriodLabelExport = (pKey: string) => {
-          if (plPeriodType === 'yearly') return pKey;
+          if (plFilter.periodType === 'yearly') return pKey;
           return formatMonth(pKey);
         };
 
@@ -1619,7 +1652,7 @@ function AccountingReportContent() {
           ? availableBranches
           : availableBranches.filter((branch) => selectedBranches.includes(branch.key)))
           .filter((branch) => rowBranchKeysExport.includes(branch.key));
-        const showBranchComparisonExport = plViewMode === 'comparison' && comparisonBranchesExport.length > 0;
+        const showBranchComparisonExport = plFilter.viewMode === 'comparison' && comparisonBranchesExport.length > 0;
 
         if (showBranchComparisonExport) {
           type BranchAcc = {
@@ -1756,8 +1789,9 @@ function AccountingReportContent() {
             { label: '', span: 2 },
           ];
 
-          const subtitle = plCompareA && plCompareB
-            ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+          const fmtPeriodLabel = (p: string) => p === '__all__' ? 'ทั้งหมด' : p;
+          const subtitle = plFilter.compareA && plFilter.compareB
+            ? withBranchSubtitle(`เปรียบเทียบ ${fmtPeriodLabel(plFilter.compareA)} กับ ${fmtPeriodLabel(plFilter.compareB)}`)
             : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
 
           return () => exportStyledReport({
@@ -1791,76 +1825,76 @@ function AccountingReportContent() {
           const sumForPeriods = (accs: Acc[], periods: string[]) => periods.reduce((sum, p) => sum + sumMonth(accs, p), 0);
           const grandSum  = (accs: Acc[]) => sumForPeriods(accs, displayPeriods);
           const diffAmount = (accs: Acc[]) => {
-            if (plViewMode !== 'comparison') return 0;
+            if (plFilter.viewMode !== 'comparison') return 0;
             return sumForPeriods(accs, periodsB) - sumForPeriods(accs, periodsA);
           };
 
           const rows: Record<string, unknown>[] = [];
-          const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
+          const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
           
           // INCOME
-          rows.push({ accountCode: '', accountName: '── รายได้ ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── รายได้ ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of income) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExport.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const revByM = Object.fromEntries(allMonthsExport.map((m) => [m, sumMonth(income, m)]));
-          const grandRev = plViewMode === 'normal' ? grandSum(income) : sumForPeriods(income, periodsA) + sumForPeriods(income, periodsB);
-          const diffRev = plViewMode === 'comparison' ? diffAmount(income) : undefined;
-          rows.push({ accountCode: '', accountName: 'รายได้รวม', ...revByM, ...(plViewMode === 'normal' ? { total: grandRev } : { totalSum: grandRev, diff: diffRev }) });
+          const grandRev = plFilter.viewMode === 'normal' ? grandSum(income) : sumForPeriods(income, periodsA) + sumForPeriods(income, periodsB);
+          const diffRev = plFilter.viewMode === 'comparison' ? diffAmount(income) : undefined;
+          rows.push({ accountCode: '', accountName: 'รายได้รวม', ...revByM, ...(plFilter.viewMode === 'normal' ? { total: grandRev } : { totalSum: grandRev, diff: diffRev }) });
           rows.push(blankRow);
           
           // COGS
-          rows.push({ accountCode: '', accountName: '── ต้นทุนขาย และหรือต้นทุนการให้บริการ ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── ต้นทุนขาย และหรือต้นทุนการให้บริการ ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of cogs) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExport.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const cogsByM = Object.fromEntries(allMonthsExport.map((m) => [m, sumMonth(cogs, m)]));
-          const grandCOGS = plViewMode === 'normal' ? grandSum(cogs) : sumForPeriods(cogs, periodsA) + sumForPeriods(cogs, periodsB);
-          const diffCOGS = plViewMode === 'comparison' ? diffAmount(cogs) : undefined;
-          rows.push({ accountCode: '', accountName: 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', ...cogsByM, ...(plViewMode === 'normal' ? { total: grandCOGS } : { totalSum: grandCOGS, diff: diffCOGS }) });
+          const grandCOGS = plFilter.viewMode === 'normal' ? grandSum(cogs) : sumForPeriods(cogs, periodsA) + sumForPeriods(cogs, periodsB);
+          const diffCOGS = plFilter.viewMode === 'comparison' ? diffAmount(cogs) : undefined;
+          rows.push({ accountCode: '', accountName: 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', ...cogsByM, ...(plFilter.viewMode === 'normal' ? { total: grandCOGS } : { totalSum: grandCOGS, diff: diffCOGS }) });
           rows.push(blankRow);
           
           // GROSS PROFIT
           const grossByM = Object.fromEntries(allMonthsExport.map((m) => [m, (revByM[m] || 0) - (cogsByM[m] || 0)]));
-          const grandGross = plViewMode === 'normal' 
+          const grandGross = plFilter.viewMode === 'normal'
             ? grandRev - grandCOGS
             : (sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB)) + (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA));
-          const diffGross = plViewMode === 'comparison'
+          const diffGross = plFilter.viewMode === 'comparison'
             ? (sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB)) - (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA))
             : undefined;
-          rows.push({ accountCode: '', accountName: 'กำไรขั้นต้น', ...grossByM, ...(plViewMode === 'normal' ? { total: grandGross } : { totalSum: grandGross, diff: diffGross }) });
+          rows.push({ accountCode: '', accountName: 'กำไรขั้นต้น', ...grossByM, ...(plFilter.viewMode === 'normal' ? { total: grandGross } : { totalSum: grandGross, diff: diffGross }) });
           rows.push(blankRow);
           
           // OPERATING
-          rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายในการดำเนินงาน ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายในการดำเนินงาน ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of operating) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExport.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const opByM = Object.fromEntries(allMonthsExport.map((m) => [m, sumMonth(operating, m)]));
-          const grandOp = plViewMode === 'normal' ? grandSum(operating) : sumForPeriods(operating, periodsA) + sumForPeriods(operating, periodsB);
-          const diffOp = plViewMode === 'comparison' ? diffAmount(operating) : undefined;
-          rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายในการดำเนินงาน', ...opByM, ...(plViewMode === 'normal' ? { total: grandOp } : { totalSum: grandOp, diff: diffOp }) });
+          const grandOp = plFilter.viewMode === 'normal' ? grandSum(operating) : sumForPeriods(operating, periodsA) + sumForPeriods(operating, periodsB);
+          const diffOp = plFilter.viewMode === 'comparison' ? diffAmount(operating) : undefined;
+          rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายในการดำเนินงาน', ...opByM, ...(plFilter.viewMode === 'normal' ? { total: grandOp } : { totalSum: grandOp, diff: diffOp }) });
           rows.push(blankRow);
           
           // OTHER EXPENSE
@@ -1868,35 +1902,35 @@ function AccountingReportContent() {
           let diffOther: number | undefined = undefined;
           const otherByM: Record<string, number> = Object.fromEntries(allMonthsExport.map((m) => [m, 0]));
           if (other.length > 0) {
-            rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายอื่น ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+            rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายอื่น ──', ...Object.fromEntries(allMonthsExport.map(empty)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
             for (const a of other) { 
-              const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-              const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+              const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+              const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
               rows.push({ 
                 accountCode: a.accountCode, 
                 accountName: a.accountName, 
                 ...Object.fromEntries(allMonthsExport.map((m) => [m, a.byMonth[m] || 0])), 
-                ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+                ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
               }); 
             }
             allMonthsExport.forEach((m) => { otherByM[m] = sumMonth(other, m); });
-            grandOther = plViewMode === 'normal' ? grandSum(other) : sumForPeriods(other, periodsA) + sumForPeriods(other, periodsB);
-            diffOther = plViewMode === 'comparison' ? diffAmount(other) : undefined;
-            rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายอื่น', ...otherByM, ...(plViewMode === 'normal' ? { total: grandOther } : { totalSum: grandOther, diff: diffOther }) });
+            grandOther = plFilter.viewMode === 'normal' ? grandSum(other) : sumForPeriods(other, periodsA) + sumForPeriods(other, periodsB);
+            diffOther = plFilter.viewMode === 'comparison' ? diffAmount(other) : undefined;
+            rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายอื่น', ...otherByM, ...(plFilter.viewMode === 'normal' ? { total: grandOther } : { totalSum: grandOther, diff: diffOther }) });
             rows.push(blankRow);
           }
           
           // NET PROFIT
           const netByM = Object.fromEntries(allMonthsExport.map((m) => [m, (grossByM[m] || 0) - (opByM[m] || 0) - (otherByM[m] || 0)]));
-          const grandNet = plViewMode === 'normal'
+          const grandNet = plFilter.viewMode === 'normal'
             ? grandGross - grandOp - grandOther
             : ((sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB) - sumForPeriods(operating, periodsB) - sumForPeriods(other, periodsB)) +
                (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA) - sumForPeriods(operating, periodsA) - sumForPeriods(other, periodsA)));
-          const diffNet = plViewMode === 'comparison'
+          const diffNet = plFilter.viewMode === 'comparison'
             ? ((sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB) - sumForPeriods(operating, periodsB) - sumForPeriods(other, periodsB)) -
                (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA) - sumForPeriods(operating, periodsA) - sumForPeriods(other, periodsA)))
             : undefined;
-          rows.push({ accountCode: '', accountName: 'กำไร (ขาดทุน) สุทธิ', ...netByM, ...(plViewMode === 'normal' ? { total: grandNet } : { totalSum: grandNet, diff: diffNet }) });
+          rows.push({ accountCode: '', accountName: 'กำไร (ขาดทุน) สุทธิ', ...netByM, ...(plFilter.viewMode === 'normal' ? { total: grandNet } : { totalSum: grandNet, diff: diffNet }) });
           return rows;
         };
         
@@ -1906,16 +1940,17 @@ function AccountingReportContent() {
           accountName: 'ผังบัญชี', 
           ...Object.fromEntries(allMonthsExport.map((m) => [m, formatMonth(m)]))
         };
-        const plHeaders = plViewMode === 'normal'
+        const plHeaders = plFilter.viewMode === 'normal'
           ? { ...baseHeaders, total: 'รวม' }
           : { ...baseHeaders, totalSum: 'ผลรวม', diff: 'ผลต่าง' };
         
-        const currencyCols = plViewMode === 'normal'
+        const currencyCols = plFilter.viewMode === 'normal'
           ? allMonthsExport.concat(['total'])
           : allMonthsExport.concat(['totalSum', 'diff']);
         
-        const subtitle = plViewMode === 'comparison' && plCompareA && plCompareB
-          ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+        const fmtPeriodLabelExcel = (p: string) => p === '__all__' ? 'ทั้งหมด' : p;
+        const subtitle = plFilter.viewMode === 'comparison' && plFilter.compareA && plFilter.compareB
+          ? withBranchSubtitle(`เปรียบเทียบ ${fmtPeriodLabelExcel(plFilter.compareA)} กับ ${fmtPeriodLabelExcel(plFilter.compareB)}`)
           : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
         
         return () => exportStyledReport({ 
@@ -2110,7 +2145,7 @@ function AccountingReportContent() {
       case 'profit-loss': {
         // Period filtering helpers (same logic as ProfitLossDetailTable and Excel export)
         const getPeriodKey = (monthStr: string) => {
-          if (plPeriodType === 'yearly') return monthStr.substring(0, 4);
+          if (plFilter.periodType === 'yearly') return monthStr.substring(0, 4);
           return monthStr;
         };
         const getQuarterStr = (monthStr: string) => {
@@ -2125,10 +2160,11 @@ function AccountingReportContent() {
           return `${y}-H${m <= 6 ? 1 : 2}`;
         };
         const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
-          if (plPeriodType === 'quarterly') {
+          if (filterStr === '__all__') return true;
+          if (plFilter.periodType === 'quarterly') {
             return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
           }
-          if (plPeriodType === 'half-yearly') {
+          if (plFilter.periodType === 'half-yearly') {
             return pKey.includes('-') && getHalfYearStr(pKey) === filterStr;
           }
           return pKey === filterStr;
@@ -2142,21 +2178,19 @@ function AccountingReportContent() {
         let periodsA: string[] = [];
         let periodsB: string[] = [];
 
-        if (plViewMode === 'normal') {
-          if (plSelectedPeriods.length > 0) {
-            displayPeriods = allAvailableKeys.filter((p) =>
-              plSelectedPeriods.some((filter) => isKeyInPeriodFilter(p, filter))
-            );
+        if (plFilter.viewMode === 'normal') {
+          if (plFilter.selectedPeriod) {
+            displayPeriods = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.selectedPeriod));
           } else {
             displayPeriods = allAvailableKeys;
           }
         } else {
           // comparison mode
-          if (plCompareA) {
-            periodsA = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plCompareA));
+          if (plFilter.compareA) {
+            periodsA = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.compareA));
           }
-          if (plCompareB) {
-            periodsB = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plCompareB));
+          if (plFilter.compareB) {
+            periodsB = allAvailableKeys.filter((p) => isKeyInPeriodFilter(p, plFilter.compareB));
           }
           displayPeriods = [...periodsA, ...periodsB];
         }
@@ -2164,7 +2198,7 @@ function AccountingReportContent() {
         const allMonthsExportPdf = displayPeriods;
         const empty2 = (m: string) => [m, ''] as [string, string];
         const formatPeriodLabelPdf = (pKey: string) => {
-          if (plPeriodType === 'yearly') return pKey;
+          if (plFilter.periodType === 'yearly') return pKey;
           return formatMonth(pKey);
         };
 
@@ -2173,7 +2207,7 @@ function AccountingReportContent() {
           ? availableBranches
           : availableBranches.filter((branch) => selectedBranches.includes(branch.key)))
           .filter((branch) => rowBranchKeysPdf.includes(branch.key));
-        const showBranchComparisonExportPdf = plViewMode === 'comparison' && comparisonBranchesPdf.length > 0;
+        const showBranchComparisonExportPdf = plFilter.viewMode === 'comparison' && comparisonBranchesPdf.length > 0;
 
         if (showBranchComparisonExportPdf) {
           type BranchAcc = {
@@ -2310,8 +2344,9 @@ function AccountingReportContent() {
             { label: '', span: 2 },
           ];
 
-          const subtitlePdf = plCompareA && plCompareB
-            ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+          const fmtPeriodLabelPdfBranch = (p: string) => p === '__all__' ? 'ทั้งหมด' : p;
+          const subtitlePdf = plFilter.compareA && plFilter.compareB
+            ? withBranchSubtitle(`เปรียบเทียบ ${fmtPeriodLabelPdfBranch(plFilter.compareA)} กับ ${fmtPeriodLabelPdfBranch(plFilter.compareB)}`)
             : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
 
           return () => exportStyledPdfReport({
@@ -2344,76 +2379,76 @@ function AccountingReportContent() {
           const sumForPeriods = (accs: Acc[], periods: string[]) => periods.reduce((sum, p) => sum + sumMonth(accs, p), 0);
           const grandSum  = (accs: Acc[]) => sumForPeriods(accs, displayPeriods);
           const diffAmount = (accs: Acc[]) => {
-            if (plViewMode !== 'comparison') return 0;
+            if (plFilter.viewMode !== 'comparison') return 0;
             return sumForPeriods(accs, periodsB) - sumForPeriods(accs, periodsA);
           };
 
           const rows: Record<string, unknown>[] = [];
-          const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
+          const blankRow = { accountCode: '', accountName: '', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) };
           
           // INCOME
-          rows.push({ accountCode: '', accountName: '── รายได้ ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── รายได้ ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of income) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExportPdf.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const revByM = Object.fromEntries(allMonthsExportPdf.map((m) => [m, sumMonth(income, m)]));
-          const grandRev = plViewMode === 'normal' ? grandSum(income) : sumForPeriods(income, periodsA) + sumForPeriods(income, periodsB);
-          const diffRev = plViewMode === 'comparison' ? diffAmount(income) : undefined;
-          rows.push({ accountCode: '', accountName: 'รายได้รวม', ...revByM, ...(plViewMode === 'normal' ? { total: grandRev } : { totalSum: grandRev, diff: diffRev }) });
+          const grandRev = plFilter.viewMode === 'normal' ? grandSum(income) : sumForPeriods(income, periodsA) + sumForPeriods(income, periodsB);
+          const diffRev = plFilter.viewMode === 'comparison' ? diffAmount(income) : undefined;
+          rows.push({ accountCode: '', accountName: 'รายได้รวม', ...revByM, ...(plFilter.viewMode === 'normal' ? { total: grandRev } : { totalSum: grandRev, diff: diffRev }) });
           rows.push(blankRow);
           
           // COGS
-          rows.push({ accountCode: '', accountName: '── ต้นทุนขาย และหรือต้นทุนการให้บริการ ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── ต้นทุนขาย และหรือต้นทุนการให้บริการ ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of cogs) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExportPdf.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const cogsByM = Object.fromEntries(allMonthsExportPdf.map((m) => [m, sumMonth(cogs, m)]));
-          const grandCOGS = plViewMode === 'normal' ? grandSum(cogs) : sumForPeriods(cogs, periodsA) + sumForPeriods(cogs, periodsB);
-          const diffCOGS = plViewMode === 'comparison' ? diffAmount(cogs) : undefined;
-          rows.push({ accountCode: '', accountName: 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', ...cogsByM, ...(plViewMode === 'normal' ? { total: grandCOGS } : { totalSum: grandCOGS, diff: diffCOGS }) });
+          const grandCOGS = plFilter.viewMode === 'normal' ? grandSum(cogs) : sumForPeriods(cogs, periodsA) + sumForPeriods(cogs, periodsB);
+          const diffCOGS = plFilter.viewMode === 'comparison' ? diffAmount(cogs) : undefined;
+          rows.push({ accountCode: '', accountName: 'รวมต้นทุนขาย และหรือต้นทุนการให้บริการ', ...cogsByM, ...(plFilter.viewMode === 'normal' ? { total: grandCOGS } : { totalSum: grandCOGS, diff: diffCOGS }) });
           rows.push(blankRow);
           
           // GROSS PROFIT
           const grossByM = Object.fromEntries(allMonthsExportPdf.map((m) => [m, (revByM[m] || 0) - (cogsByM[m] || 0)]));
-          const grandGross = plViewMode === 'normal' 
+          const grandGross = plFilter.viewMode === 'normal'
             ? grandRev - grandCOGS
             : (sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB)) + (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA));
-          const diffGross = plViewMode === 'comparison'
+          const diffGross = plFilter.viewMode === 'comparison'
             ? (sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB)) - (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA))
             : undefined;
-          rows.push({ accountCode: '', accountName: 'กำไรขั้นต้น', ...grossByM, ...(plViewMode === 'normal' ? { total: grandGross } : { totalSum: grandGross, diff: diffGross }) });
+          rows.push({ accountCode: '', accountName: 'กำไรขั้นต้น', ...grossByM, ...(plFilter.viewMode === 'normal' ? { total: grandGross } : { totalSum: grandGross, diff: diffGross }) });
           rows.push(blankRow);
           
           // OPERATING
-          rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายในการดำเนินงาน ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+          rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายในการดำเนินงาน ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
           for (const a of operating) { 
-            const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-            const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+            const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+            const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
             rows.push({ 
               accountCode: a.accountCode, 
               accountName: a.accountName, 
               ...Object.fromEntries(allMonthsExportPdf.map((m) => [m, a.byMonth[m] || 0])), 
-              ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+              ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
             }); 
           }
           const opByM = Object.fromEntries(allMonthsExportPdf.map((m) => [m, sumMonth(operating, m)]));
-          const grandOp = plViewMode === 'normal' ? grandSum(operating) : sumForPeriods(operating, periodsA) + sumForPeriods(operating, periodsB);
-          const diffOp = plViewMode === 'comparison' ? diffAmount(operating) : undefined;
-          rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายในการดำเนินงาน', ...opByM, ...(plViewMode === 'normal' ? { total: grandOp } : { totalSum: grandOp, diff: diffOp }) });
+          const grandOp = plFilter.viewMode === 'normal' ? grandSum(operating) : sumForPeriods(operating, periodsA) + sumForPeriods(operating, periodsB);
+          const diffOp = plFilter.viewMode === 'comparison' ? diffAmount(operating) : undefined;
+          rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายในการดำเนินงาน', ...opByM, ...(plFilter.viewMode === 'normal' ? { total: grandOp } : { totalSum: grandOp, diff: diffOp }) });
           rows.push(blankRow);
           
           // OTHER EXPENSE
@@ -2421,35 +2456,35 @@ function AccountingReportContent() {
           let diffOther: number | undefined = undefined;
           const otherByM: Record<string, number> = Object.fromEntries(allMonthsExportPdf.map((m) => [m, 0]));
           if (other.length > 0) {
-            rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายอื่น ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plViewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
+            rows.push({ accountCode: '', accountName: '── ค่าใช้จ่ายอื่น ──', ...Object.fromEntries(allMonthsExportPdf.map(empty2)), ...(plFilter.viewMode === 'normal' ? { total: '' } : { totalSum: '', diff: '' }) });
             for (const a of other) { 
-              const t = plViewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
-              const d = plViewMode === 'comparison' ? diffAmount([a]) : undefined;
+              const t = plFilter.viewMode === 'normal' ? grandSum([a]) : sumForPeriods([a], periodsA) + sumForPeriods([a], periodsB);
+              const d = plFilter.viewMode === 'comparison' ? diffAmount([a]) : undefined;
               rows.push({ 
                 accountCode: a.accountCode, 
                 accountName: a.accountName, 
                 ...Object.fromEntries(allMonthsExportPdf.map((m) => [m, a.byMonth[m] || 0])), 
-                ...(plViewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
+                ...(plFilter.viewMode === 'normal' ? { total: t } : { totalSum: t, diff: d })
               }); 
             }
             allMonthsExportPdf.forEach((m) => { otherByM[m] = sumMonth(other, m); });
-            grandOther = plViewMode === 'normal' ? grandSum(other) : sumForPeriods(other, periodsA) + sumForPeriods(other, periodsB);
-            diffOther = plViewMode === 'comparison' ? diffAmount(other) : undefined;
-            rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายอื่น', ...otherByM, ...(plViewMode === 'normal' ? { total: grandOther } : { totalSum: grandOther, diff: diffOther }) });
+            grandOther = plFilter.viewMode === 'normal' ? grandSum(other) : sumForPeriods(other, periodsA) + sumForPeriods(other, periodsB);
+            diffOther = plFilter.viewMode === 'comparison' ? diffAmount(other) : undefined;
+            rows.push({ accountCode: '', accountName: 'รวมค่าใช้จ่ายอื่น', ...otherByM, ...(plFilter.viewMode === 'normal' ? { total: grandOther } : { totalSum: grandOther, diff: diffOther }) });
             rows.push(blankRow);
           }
           
           // NET PROFIT
           const netByM = Object.fromEntries(allMonthsExportPdf.map((m) => [m, (grossByM[m] || 0) - (opByM[m] || 0) - (otherByM[m] || 0)]));
-          const grandNet = plViewMode === 'normal'
+          const grandNet = plFilter.viewMode === 'normal'
             ? grandGross - grandOp - grandOther
             : ((sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB) - sumForPeriods(operating, periodsB) - sumForPeriods(other, periodsB)) +
                (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA) - sumForPeriods(operating, periodsA) - sumForPeriods(other, periodsA)));
-          const diffNet = plViewMode === 'comparison'
+          const diffNet = plFilter.viewMode === 'comparison'
             ? ((sumForPeriods(income, periodsB) - sumForPeriods(cogs, periodsB) - sumForPeriods(operating, periodsB) - sumForPeriods(other, periodsB)) -
                (sumForPeriods(income, periodsA) - sumForPeriods(cogs, periodsA) - sumForPeriods(operating, periodsA) - sumForPeriods(other, periodsA)))
             : undefined;
-          rows.push({ accountCode: '', accountName: 'กำไร (ขาดทุน) สุทธิ', ...netByM, ...(plViewMode === 'normal' ? { total: grandNet } : { totalSum: grandNet, diff: diffNet }) });
+          rows.push({ accountCode: '', accountName: 'กำไร (ขาดทุน) สุทธิ', ...netByM, ...(plFilter.viewMode === 'normal' ? { total: grandNet } : { totalSum: grandNet, diff: diffNet }) });
           return rows;
         };
         
@@ -2459,16 +2494,17 @@ function AccountingReportContent() {
           accountName: 'ผังบัญชี', 
           ...Object.fromEntries(allMonthsExportPdf.map((m) => [m, formatMonth(m)]))
         };
-        const plHeadersPdf = plViewMode === 'normal'
+        const plHeadersPdf = plFilter.viewMode === 'normal'
           ? { ...baseHeadersPdf, total: 'รวม' }
           : { ...baseHeadersPdf, totalSum: 'ผลรวม', diff: 'ผลต่าง' };
         
-        const currencyColsPdf = plViewMode === 'normal'
+        const currencyColsPdf = plFilter.viewMode === 'normal'
           ? allMonthsExportPdf.concat(['total'])
           : allMonthsExportPdf.concat(['totalSum', 'diff']);
         
-        const subtitlePdf = plViewMode === 'comparison' && plCompareA && plCompareB
-          ? withBranchSubtitle(`เปรียบเทียบ ${plCompareA} กับ ${plCompareB}`)
+        const fmtPeriodLabelPdf = (p: string) => p === '__all__' ? 'ทั้งหมด' : p;
+        const subtitlePdf = plFilter.viewMode === 'comparison' && plFilter.compareA && plFilter.compareB
+          ? withBranchSubtitle(`เปรียบเทียบ ${fmtPeriodLabelPdf(plFilter.compareA)} กับ ${fmtPeriodLabelPdf(plFilter.compareB)}`)
           : withBranchSubtitle(`ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`);
         
         return () => exportStyledPdfReport({ 
@@ -2693,126 +2729,13 @@ function AccountingReportContent() {
               setSelectedAccountCode('');
             }}
           />
-          {selectedReport === 'profit-loss' && (
-            <div className="flex flex-wrap items-center gap-3  ml-auto">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">มุมมอง:</span>
-                <SearchableSelect
-                  value={plViewMode}
-                  onChange={(v) => { setPlViewMode(v as 'normal' | 'comparison'); }}
-                  options={[
-                    { value: 'normal', label: 'ปกติ' },
-                    { value: 'comparison', label: 'เปรียบเทียบ' },
-                  ]}
-                  className="w-[120px]"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">ความถี่:</span>
-                <SearchableSelect
-                  value={plPeriodType}
-                  onChange={(v) => { 
-                    setPlPeriodType(v as 'monthly' | 'quarterly' | 'half-yearly' | 'yearly'); 
-                    setPlSelectedPeriods([]); 
-                    setPlCompareA(''); 
-                    setPlCompareB(''); 
-                  }}
-                  options={[
-                    { value: 'monthly', label: 'รายเดือน' },
-                    { value: 'quarterly', label: 'รายไตรมาส' },
-                    { value: 'half-yearly', label: 'รายครึ่งปี' },
-                    { value: 'yearly', label: 'รายปี' },
-                  ]}
-                  className="w-[120px]"
-                />
-              </div>
-              {plViewMode === 'normal' && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">ช่วง:</span>
-                  <SearchableSelect
-                    value={plSelectedPeriods.join(',')}
-                    onChange={(v) => setPlSelectedPeriods(v ? [v] : [])}
-                    options={[
-                      { value: '', label: 'ทั้งหมด' },
-                      ...Array.from(new Set(plDetailRows.map(r => {
-                        const pKey = r.month;
-                        if (plPeriodType === 'yearly') return pKey.substring(0, 4);
-                        if (plPeriodType === 'quarterly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          const q = Math.ceil(m / 3);
-                          return `${y}-Q${q}`;
-                        }
-                        if (plPeriodType === 'half-yearly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          return `${y}-H${m <= 6 ? 1 : 2}`;
-                        }
-                        return pKey;
-                      }))).sort().map(p => ({
-                        value: p,
-                        label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p)
-                      }))
-                    ]}
-                    className="w-[150px]"
-                  />
-                </div>
-              )}
-              {plViewMode === 'comparison' && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">เทียบ:</span>
-                  <SearchableSelect
-                    value={plCompareA}
-                    onChange={setPlCompareA}
-                    options={[
-                      { value: '', label: 'เลือกช่วง Q1' },
-                      ...Array.from(new Set(plDetailRows.map(r => {
-                        const pKey = r.month;
-                        if (plPeriodType === 'yearly') return pKey.substring(0, 4);
-                        if (plPeriodType === 'quarterly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          const q = Math.ceil(m / 3);
-                          return `${y}-Q${q}`;
-                        }
-                        if (plPeriodType === 'half-yearly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          return `${y}-H${m <= 6 ? 1 : 2}`;
-                        }
-                        return pKey;
-                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p) }))
-                    ]}
-                    className="w-[140px]"
-                  />
-                  <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">กับ</span>
-                  <SearchableSelect
-                    value={plCompareB}
-                    onChange={setPlCompareB}
-                    options={[
-                      { value: '', label: 'เลือกช่วง Q2' },
-                      ...Array.from(new Set(plDetailRows.map(r => {
-                        const pKey = r.month;
-                        if (plPeriodType === 'yearly') return pKey.substring(0, 4);
-                        if (plPeriodType === 'quarterly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          const q = Math.ceil(m / 3);
-                          return `${y}-Q${q}`;
-                        }
-                        if (plPeriodType === 'half-yearly') {
-                          const y = pKey.substring(0, 4);
-                          const m = parseInt(pKey.substring(5, 7), 10);
-                          return `${y}-H${m <= 6 ? 1 : 2}`;
-                        }
-                        return pKey;
-                      }))).sort().map(p => ({ value: p, label: plPeriodType === 'yearly' ? p : plPeriodType === 'quarterly' ? `ไตรมาส ${p.split('-Q')[1]}/${p.split('-Q')[0]}` : plPeriodType === 'half-yearly' ? `ครึ่งปี ${p.split('-H')[1]}/${p.split('-H')[0]}` : formatMonth(p) }))
-                    ]}
-                    className="w-[140px]"
-                  />
-                </div>
-              )}
-            </div>
+          {showPeriodFilter && (
+            <ReportPeriodFilter
+              value={plFilter}
+              onChange={setPlFilter}
+              availableMonths={accountingAvailableMonths}
+              className="ml-auto"
+            />
           )}
         </div>
       </motion.div>

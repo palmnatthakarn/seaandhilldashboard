@@ -115,7 +115,7 @@ function clampDateRange(range: DateRange, bounds: DateRange): DateRange {
 }
 
 function getPeriodDateRange(periodKey: string, periodType: PeriodType, bounds: DateRange): DateRange {
-  if (!periodKey) return bounds;
+  if (!periodKey || periodKey === '__all__') return bounds;
 
   if (periodType === 'yearly') {
     return clampDateRange({ start: `${periodKey}-01-01`, end: `${periodKey}-12-31` }, bounds);
@@ -900,9 +900,17 @@ function SalesReportContent() {
     ? salesByCategory 
     : salesByCategory.filter(item => normalizeFilterValue(item.categoryCode) === selectedCategory);
 
-  const topProductsDateSubtitle = topProductsDateRanges.length > 1
-    ? `ช่วงวันที่ ${topProductsDateRanges.map((range) => `${range.start} ถึง ${range.end}`).join(', ')}`
-    : `ช่วงวันที่ ${topProductsSubtitleDateRange.start} ถึง ${topProductsSubtitleDateRange.end}`;
+  const fmtTopProductsPeriodLabel = (period: string, range: DateRange) =>
+    period === '__all__' ? 'ทั้งหมด' : `${range.start} ถึง ${range.end}`;
+  const topProductsDateSubtitle = (() => {
+    if (salesFilter.viewMode === 'comparison' && (salesFilter.compareA || salesFilter.compareB)) {
+      const parts = [salesFilter.compareA, salesFilter.compareB]
+        .filter(Boolean)
+        .map((period, i) => fmtTopProductsPeriodLabel(period, topProductsDateRanges[i] || topProductsSubtitleDateRange));
+      return parts.length > 1 ? `เปรียบเทียบ ${parts[0]} กับ ${parts[1]}` : `ช่วงวันที่ ${parts[0]}`;
+    }
+    return `ช่วงวันที่ ${topProductsSubtitleDateRange.start} ถึง ${topProductsSubtitleDateRange.end}`;
+  })();
 
   const topProductsComparisonExport = useMemo(() => {
     const branchMetricKeys = comparisonBranches.flatMap((branch) => [

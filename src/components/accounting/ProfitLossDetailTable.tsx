@@ -87,6 +87,7 @@ export function ProfitLossDetailTable({
   };
 
   const isKeyInPeriodFilter = (pKey: string, filterStr: string) => {
+    if (filterStr === '__all__') return true;
     if (periodType === 'quarterly') {
       return pKey.includes('-') && getQuarterStr(pKey) === filterStr;
     }

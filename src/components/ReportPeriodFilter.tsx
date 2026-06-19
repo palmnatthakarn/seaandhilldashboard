@@ -72,8 +72,9 @@ export function matchesReportPeriod(monthStr: string, filter: ReportPeriodFilter
     return !filter.selectedPeriod || key === filter.selectedPeriod;
   }
   if (!filter.compareA && !filter.compareB) return true;
-  return (filter.compareA !== '' && key === filter.compareA) ||
-    (filter.compareB !== '' && key === filter.compareB);
+  const matchA = filter.compareA !== '' && (filter.compareA === '__all__' || key === filter.compareA);
+  const matchB = filter.compareB !== '' && (filter.compareB === '__all__' || key === filter.compareB);
+  return matchA || matchB;
 }
 
 export function filterRowsByReportPeriod<T>(
@@ -158,14 +159,22 @@ export function ReportPeriodFilter({ value, onChange, availableMonths, className
           <SearchableSelect
             value={value.compareA}
             onChange={(v) => update({ compareA: v })}
-            options={[{ value: '', label: 'เลือกช่วง A' }, ...periodOptions]}
+            options={[
+              { value: '', label: 'เลือกช่วง A' },
+              ...(value.periodType === 'monthly' ? [{ value: '__all__', label: 'ทั้งหมด' }] : []),
+              ...periodOptions,
+            ]}
             className="w-[140px]"
           />
           <span className="text-sm font-medium text-muted-foreground whitespace-nowrap">กับ</span>
           <SearchableSelect
             value={value.compareB}
             onChange={(v) => update({ compareB: v })}
-            options={[{ value: '', label: 'เลือกช่วง B' }, ...periodOptions]}
+            options={[
+              { value: '', label: 'เลือกช่วง B' },
+              ...(value.periodType === 'monthly' ? [{ value: '__all__', label: 'ทั้งหมด' }] : []),
+              ...periodOptions,
+            ]}
             className="w-[140px]"
           />
         </div>
