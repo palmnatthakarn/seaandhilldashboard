@@ -365,6 +365,35 @@ export interface PurchaseItemsByAccount {
   totalAmount: number;
 }
 
+export interface PurchaseItemEntry {
+  itemCode: string;
+  itemName: string;
+  categoryName: string;
+}
+
+export interface ItemSupplierSummary {
+  supplierCode: string;
+  supplierName: string;
+  branchSync: string;
+  poCount: number;
+  totalQty: number;
+  totalAmount: number;
+  avgPrice: number;
+  lastPurchaseDate: string;
+}
+
+export interface ItemPurchaseHistory {
+  docDate: string;
+  docNo: string;
+  supplierCode: string;
+  supplierName: string;
+  branchSync: string;
+  unitCode: string;
+  qty: number;
+  price: number;
+  totalAmount: number;
+}
+
 // ============================================
 // Inventory Types
 // ============================================

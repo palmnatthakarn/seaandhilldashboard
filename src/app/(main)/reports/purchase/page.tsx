@@ -21,6 +21,7 @@ import {
   FolderTree,
   Tag,
   CreditCard,
+  Package,
 } from 'lucide-react';
 import { exportStyledReport } from '@/lib/exportExcel';
 import { exportStyledPdfReport } from '@/lib/exportPdf';
@@ -37,6 +38,9 @@ import type {
   CategoryBreakdown,
   PurchaseItemsByAccount,
   SupplierPODetail,
+  PurchaseItemEntry,
+  ItemSupplierSummary,
+  ItemPurchaseHistory,
 } from '@/lib/data/types';
 
 // Report types
@@ -48,7 +52,8 @@ type ReportType =
   | 'ap-outstanding'
   | 'expense-by-account'
   | 'by-category'
-  | 'supplier-detail';
+  | 'supplier-detail'
+  | 'item-by-supplier';
 
 const reportOptions: ReportOption<ReportType>[] = [
   {
@@ -98,6 +103,12 @@ const reportOptions: ReportOption<ReportType>[] = [
     label: 'รายละเอียดตามซัพพลายเออร์',
     icon: Users,
     description: 'รายการ PO และผังบัญชีแยกตามซัพพลายเออร์',
+  },
+  {
+    value: 'item-by-supplier',
+    label: 'สินค้าตามซัพพลายเออร์',
+    icon: Package,
+    description: 'เลือกสินค้าเพื่อดูว่าซื้อมาจากซัพพลายเออร์ไหนบ้าง',
   },
 ];
 
@@ -205,6 +216,7 @@ function PurchaseReportContent() {
     return searchParams.get('supplierCode') || '';
   });
   const [supplierAccountFilter, setSupplierAccountFilter] = useState<string>('ALL');
+  const [selectedItemCode, setSelectedItemCode] = useState<string>('');
   const selectedBranches = useBranchStore((s) => s.selectedBranches);
   const availableBranches = useBranchStore((s) => s.availableBranches);
   const selectedBranchLabel = formatSelectedBranchNames(selectedBranches, availableBranches);
@@ -287,6 +299,8 @@ function PurchaseReportContent() {
         case 'supplier-detail':
           endpoint = `/api/purchase/top-suppliers?${params}`;
           break;
+        case 'item-by-supplier':
+          return [];
       }
 
       const response = await fetch(endpoint);
@@ -374,6 +388,67 @@ function PurchaseReportContent() {
     enabled: selectedReport === 'supplier-detail' && !!selectedSupplierCode,
   });
 
+  // Query for distinct item list (for item-by-supplier report)
+  const { data: purchaseItemList, isLoading: itemListLoading } = useQuery({
+    queryKey: ['purchaseItemList', dateRange, selectedBranches],
+    queryFn: async () => {
+      const params = new URLSearchParams({
+        start_date: dateRange.start,
+        end_date: dateRange.end,
+      });
+      if (!selectedBranches.includes('ALL')) {
+        selectedBranches.forEach((b) => params.append('branch', b));
+      }
+      const response = await fetch(`/api/purchase/item-list?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch item list');
+      const result = await response.json();
+      return result.data as PurchaseItemEntry[];
+    },
+    enabled: selectedReport === 'item-by-supplier',
+  });
+
+  // Query for suppliers by item
+  const { data: itemSuppliers, isLoading: itemSuppliersLoading } = useQuery({
+    queryKey: ['purchaseItemSuppliers', selectedItemCode, dateRange, selectedBranches],
+    queryFn: async () => {
+      if (!selectedItemCode) return [];
+      const params = new URLSearchParams({
+        start_date: dateRange.start,
+        end_date: dateRange.end,
+        item_code: selectedItemCode,
+      });
+      if (!selectedBranches.includes('ALL')) {
+        selectedBranches.forEach((b) => params.append('branch', b));
+      }
+      const response = await fetch(`/api/purchase/suppliers-by-item?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch item suppliers');
+      const result = await response.json();
+      return result.data as ItemSupplierSummary[];
+    },
+    enabled: selectedReport === 'item-by-supplier' && !!selectedItemCode,
+  });
+
+  // Query for item purchase history (all PO rows for selected item)
+  const { data: itemPurchaseHistory, isLoading: itemHistoryLoading } = useQuery({
+    queryKey: ['purchaseItemHistory', selectedItemCode, dateRange, selectedBranches],
+    queryFn: async () => {
+      if (!selectedItemCode) return [];
+      const params = new URLSearchParams({
+        start_date: dateRange.start,
+        end_date: dateRange.end,
+        item_code: selectedItemCode,
+      });
+      if (!selectedBranches.includes('ALL')) {
+        selectedBranches.forEach((b) => params.append('branch', b));
+      }
+      const response = await fetch(`/api/purchase/item-purchase-history?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch item purchase history');
+      const result = await response.json();
+      return result.data as ItemPurchaseHistory[];
+    },
+    enabled: selectedReport === 'item-by-supplier' && !!selectedItemCode,
+  });
+
   // Available months for period filter
   const purchaseAvailableMonths = useMemo(() => {
     if (selectedReport === 'purchase-trend' && trendData.length > 0)
@@ -382,8 +457,10 @@ function PurchaseReportContent() {
       return Array.from(new Set(accountItems.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
     if (selectedReport === 'supplier-detail' && supplierDetails?.length)
       return Array.from(new Set(supplierDetails.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
+    if (selectedReport === 'item-by-supplier' && itemPurchaseHistory?.length)
+      return Array.from(new Set(itemPurchaseHistory.map((r) => r.docDate.substring(0, 7)))).filter(Boolean);
     return getMonthsFromDateRange(dateRange.start, dateRange.end);
-  }, [selectedReport, trendData, accountItems, supplierDetails, dateRange]);
+  }, [selectedReport, trendData, accountItems, supplierDetails, itemPurchaseHistory, dateRange]);
 
   const periodFilteredAccountItems = useMemo(
     () => filterRowsByReportPeriod(accountItems || [], (r) => r.docDate.substring(0, 7), purchaseFilter),
@@ -393,6 +470,11 @@ function PurchaseReportContent() {
   const periodFilteredSupplierDetails = useMemo(
     () => filterRowsByReportPeriod(supplierDetails || [], (r) => r.docDate.substring(0, 7), purchaseFilter),
     [supplierDetails, purchaseFilter]
+  );
+
+  const periodFilteredItemHistory = useMemo(
+    () => filterRowsByReportPeriod(itemPurchaseHistory || [], (r) => r.docDate.substring(0, 7), purchaseFilter),
+    [itemPurchaseHistory, purchaseFilter]
   );
 
   // Column definitions for Purchase Analysis
@@ -908,6 +990,167 @@ function PurchaseReportContent() {
     },
   ];
 
+  // Column definitions for Item Suppliers
+  const itemSupplierColumns: ColumnDef<ItemSupplierSummary>[] = [
+    {
+      key: 'rank',
+      header: '#',
+      sortable: false,
+      align: 'center',
+      render: (_item: ItemSupplierSummary, index?: number) => (
+        <span className="text-muted-foreground">{(index || 0) + 1}</span>
+      ),
+    },
+    {
+      key: 'branchSync',
+      header: 'กิจการ',
+      sortable: true,
+      align: 'left',
+      render: (item: ItemSupplierSummary) => {
+        const branch = availableBranches.find((b) => b.key === item.branchSync);
+        return (
+          <span className="text-sm">{branch?.name || item.branchSync}</span>
+        );
+      },
+    },
+    {
+      key: 'supplierName',
+      header: 'ซัพพลายเออร์',
+      sortable: true,
+      align: 'left',
+      render: (item: ItemSupplierSummary) => (
+        <div>
+          <div className="font-medium">{item.supplierName || item.supplierCode}</div>
+          {item.supplierName && (
+            <div className="text-xs text-muted-foreground font-mono">{item.supplierCode}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'poCount',
+      header: 'จำนวน PO',
+      sortable: true,
+      align: 'right',
+      render: (item: ItemSupplierSummary) => formatNumber(item.poCount),
+    },
+    {
+      key: 'totalQty',
+      header: 'จำนวนซื้อ',
+      sortable: true,
+      align: 'right',
+      render: (item: ItemSupplierSummary) =>
+        item.totalQty.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    },
+    {
+      key: 'avgPrice',
+      header: 'ราคาเฉลี่ย',
+      sortable: true,
+      align: 'right',
+      render: (item: ItemSupplierSummary) => <span>฿{formatCurrency(item.avgPrice)}</span>,
+    },
+    {
+      key: 'totalAmount',
+      header: 'ยอดซื้อรวม',
+      sortable: true,
+      align: 'right',
+      render: (item: ItemSupplierSummary) => (
+        <span className="font-semibold text-blue-700">฿{formatCurrency(item.totalAmount)}</span>
+      ),
+    },
+    {
+      key: 'lastPurchaseDate',
+      header: 'ซื้อล่าสุด',
+      sortable: true,
+      align: 'center',
+      render: (item: ItemSupplierSummary) => formatDate(item.lastPurchaseDate),
+    },
+  ];
+
+  // Column definitions for Item Purchase History
+  const itemHistoryColumns: ColumnDef<ItemPurchaseHistory>[] = [
+    {
+      key: 'docDate',
+      header: 'วันที่',
+      sortable: true,
+      align: 'center',
+      width: '9%',
+      render: (item: ItemPurchaseHistory) => formatDate(item.docDate),
+    },
+    {
+      key: 'docNo',
+      header: 'เลขที่ PO',
+      sortable: true,
+      align: 'left',
+      width: '12%',
+      render: (item: ItemPurchaseHistory) => (
+        <span className="font-mono text-xs font-medium">{item.docNo}</span>
+      ),
+    },
+    {
+      key: 'branchSync',
+      header: 'กิจการ',
+      sortable: true,
+      align: 'left',
+      width: '12%',
+      render: (item: ItemPurchaseHistory) => {
+        const branch = availableBranches.find((b) => b.key === item.branchSync);
+        return (
+          <span className="text-sm">{branch?.name || item.branchSync}</span>
+        );
+      },
+    },
+    {
+      key: 'supplierName',
+      header: 'ซัพพลายเออร์',
+      sortable: true,
+      align: 'left',
+      width: '22%',
+      render: (item: ItemPurchaseHistory) => (
+        <div>
+          <div className="font-medium">{item.supplierName || item.supplierCode}</div>
+          {item.supplierName && (
+            <div className="text-xs text-muted-foreground font-mono">{item.supplierCode}</div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'qty',
+      header: 'จำนวน',
+      sortable: true,
+      align: 'right',
+      width: '9%',
+      render: (item: ItemPurchaseHistory) =>
+        item.qty.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    },
+    {
+      key: 'unitCode',
+      header: 'หน่วย',
+      sortable: true,
+      align: 'center',
+      width: '7%',
+    },
+    {
+      key: 'price',
+      header: 'ราคา/หน่วย',
+      sortable: true,
+      align: 'right',
+      width: '12%',
+      render: (item: ItemPurchaseHistory) => <span>฿{formatCurrency(item.price)}</span>,
+    },
+    {
+      key: 'totalAmount',
+      header: 'ยอดเงิน',
+      sortable: true,
+      align: 'right',
+      width: '12%',
+      render: (item: ItemPurchaseHistory) => (
+        <span className="font-semibold text-blue-700">฿{formatCurrency(item.totalAmount)}</span>
+      ),
+    },
+  ];
+
   // Get current report option
   const currentReport = reportOptions.find(opt => opt.value === selectedReport);
 
@@ -1200,6 +1443,104 @@ function PurchaseReportContent() {
           </div>
         );
 
+      case 'item-by-supplier': {
+        const isLoadingItem = itemListLoading || itemSuppliersLoading || itemHistoryLoading;
+        const selectedItemInfo = purchaseItemList?.find(i => i.itemCode === selectedItemCode);
+        return isLoadingItem ? (
+          <TableSkeleton rows={10} />
+        ) : (
+          <div className="space-y-6">
+            {!selectedItemCode && (
+              <div className="flex flex-col items-center justify-center p-12 bg-muted/30 rounded-lg border border-dashed">
+                <Package className="h-12 w-12 text-muted-foreground mb-4" />
+                <h3 className="text-lg font-medium">กรุณาเลือกสินค้า</h3>
+                <p className="text-sm text-muted-foreground">เพื่อดูว่าสินค้านี้ซื้อมาจากซัพพลายเออร์ไหนบ้าง</p>
+              </div>
+            )}
+            {selectedItemCode && (
+              <>
+                {/* Supplier summary */}
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                    สรุปรายซัพพลายเออร์
+                  </h3>
+                  <PaginatedTable
+                    data={itemSuppliers || []}
+                    columns={itemSupplierColumns}
+                    itemsPerPage={10}
+                    emptyMessage="ไม่พบซัพพลายเออร์สำหรับสินค้านี้"
+                    defaultSortKey="totalAmount"
+                    defaultSortOrder="desc"
+                    keyExtractor={(item: ItemSupplierSummary, index?: number) => `${item.supplierCode}-${index ?? 0}`}
+                    showSummary={true}
+                    summaryConfig={{
+                      labelColSpan: 2,
+                      values: {
+                        poCount: (data) => {
+                          const total = data.reduce((sum, item) => sum + item.poCount, 0);
+                          return <span className="font-medium text-black">{formatNumber(total)}</span>;
+                        },
+                        totalQty: (data) => {
+                          const total = data.reduce((sum, item) => sum + item.totalQty, 0);
+                          return <span className="font-medium text-black">
+                            {total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>;
+                        },
+                        totalAmount: (data) => {
+                          const total = data.reduce((sum, item) => sum + item.totalAmount, 0);
+                          return <span className="font-semibold text-blue-700">฿{formatCurrency(total)}</span>;
+                        },
+                      }
+                    }}
+                  />
+                </div>
+
+                {/* PO History */}
+                <div>
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                    ประวัติรายการซื้อ
+                    {selectedItemInfo && (
+                      <span className="ml-2 normal-case font-normal text-foreground">
+                        — {selectedItemInfo.itemName}
+                        <span className="ml-1 text-xs text-muted-foreground">({periodFilteredItemHistory.length} รายการ)</span>
+                      </span>
+                    )}
+                  </h3>
+                  <PaginatedTable
+                    data={periodFilteredItemHistory}
+                    columns={itemHistoryColumns}
+                    itemsPerPage={10}
+                    emptyMessage="ไม่พบประวัติการสั่งซื้อในช่วงเวลานี้"
+                    defaultSortKey="docDate"
+                    defaultSortOrder="desc"
+                    keyExtractor={(item: ItemPurchaseHistory, index: number) =>
+                      `${item.docNo}-${item.supplierCode}-${index}`
+                    }
+                    showSummary={true}
+                    summaryConfig={{
+                      labelColSpan: 3,
+                      values: {
+                        qty: (data) => {
+                          const total = data.reduce((sum, item) => sum + item.qty, 0);
+                          return <span className="font-medium text-black">
+                            {total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>;
+                        },
+                        price: () => <span className="text-muted-foreground">-</span>,
+                        totalAmount: (data) => {
+                          const total = data.reduce((sum, item) => sum + item.totalAmount, 0);
+                          return <span className="font-semibold text-blue-700">฿{formatCurrency(total)}</span>;
+                        },
+                      }
+                    }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        );
+      }
+
       default:
         return null;
     }
@@ -1380,14 +1721,14 @@ function PurchaseReportContent() {
 
       case 'supplier-detail':
         return () => {
-          const supplierName = selectedSupplierCode 
+          const supplierName = selectedSupplierCode
             ? topSuppliers.find(s => s.supplierCode === selectedSupplierCode)?.supplierName || selectedSupplierCode
             : 'ทั้งหมด';
-          
+
           const accountName = supplierAccountFilter !== 'ALL'
             ? uniqueSupplierAccounts.find(a => a.code === supplierAccountFilter)?.name || supplierAccountFilter
             : 'ทั้งหมด';
-          
+
           return exportStyledReport({
             data: filteredSupplierDetails,
             headers: {
@@ -1407,6 +1748,37 @@ function PurchaseReportContent() {
             sheetName: 'Supplier Details',
             title: `รายงานรายละเอียดตามซัพพลายเออร์ - ${supplierName}`,
             subtitle: withBranchSubtitle(`ผังบัญชี: ${accountName} | ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            currencyColumns: ['price', 'totalAmount'],
+            numberColumns: ['qty'],
+            summaryConfig: {
+              columns: {
+                qty: 'sum',
+                totalAmount: 'sum',
+              }
+            }
+          });
+        };
+
+      case 'item-by-supplier':
+        return () => {
+          const item = purchaseItemList?.find(i => i.itemCode === selectedItemCode);
+          const itemLabel = item ? `${item.itemCode}_${item.itemName}` : selectedItemCode;
+          return exportStyledReport({
+            data: periodFilteredItemHistory,
+            headers: {
+              docDate: 'วันที่',
+              docNo: 'เลขที่ PO',
+              supplierCode: 'รหัสซัพพลายเออร์',
+              supplierName: 'ชื่อซัพพลายเออร์',
+              qty: 'จำนวน',
+              unitCode: 'หน่วย',
+              price: 'ราคา/หน่วย',
+              totalAmount: 'ยอดเงิน',
+            },
+            filename: `ประวัติซื้อสินค้า_${itemLabel}`,
+            sheetName: 'Purchase History',
+            title: `ประวัติการสั่งซื้อ: ${item?.itemName || selectedItemCode}`,
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['price', 'totalAmount'],
             numberColumns: ['qty'],
             summaryConfig: {
@@ -1590,14 +1962,14 @@ function PurchaseReportContent() {
 
       case 'supplier-detail':
         return () => {
-          const supplierName = selectedSupplierCode 
+          const supplierName = selectedSupplierCode
             ? topSuppliers.find(s => s.supplierCode === selectedSupplierCode)?.supplierName || selectedSupplierCode
             : 'ทั้งหมด';
-          
+
           const accountName = supplierAccountFilter !== 'ALL'
             ? uniqueSupplierAccounts.find(a => a.code === supplierAccountFilter)?.name || supplierAccountFilter
             : 'ทั้งหมด';
-          
+
           return exportStyledPdfReport({
             data: filteredSupplierDetails,
             headers: {
@@ -1616,6 +1988,36 @@ function PurchaseReportContent() {
             filename: `รายละเอียดตามซัพพลายเออร์_${supplierName}_${accountName}`,
             title: `รายงานรายละเอียดตามซัพพลายเออร์ - ${supplierName}`,
             subtitle: withBranchSubtitle(`ผังบัญชี: ${accountName} | ช่วงวันที่ ${dateRange.start} ถึง ${dateRange.end}`),
+            currencyColumns: ['price', 'totalAmount'],
+            numberColumns: ['qty'],
+            summaryConfig: {
+              columns: {
+                qty: 'sum',
+                totalAmount: 'sum',
+              }
+            }
+          });
+        };
+
+      case 'item-by-supplier':
+        return () => {
+          const item = purchaseItemList?.find(i => i.itemCode === selectedItemCode);
+          const itemLabel = item ? `${item.itemCode}_${item.itemName}` : selectedItemCode;
+          return exportStyledPdfReport({
+            data: periodFilteredItemHistory,
+            headers: {
+              docDate: 'วันที่',
+              docNo: 'เลขที่ PO',
+              supplierCode: 'รหัสซัพพลายเออร์',
+              supplierName: 'ชื่อซัพพลายเออร์',
+              qty: 'จำนวน',
+              unitCode: 'หน่วย',
+              price: 'ราคา/หน่วย',
+              totalAmount: 'ยอดเงิน',
+            },
+            filename: `ประวัติซื้อสินค้า_${itemLabel}`,
+            title: `ประวัติการสั่งซื้อ: ${item?.itemName || selectedItemCode}`,
+            subtitle: withBranchSubtitle(`ช่วงวันที่ ${exportDateRange.start} ถึง ${exportDateRange.end}`),
             currencyColumns: ['price', 'totalAmount'],
             numberColumns: ['qty'],
             summaryConfig: {
@@ -1790,6 +2192,24 @@ function PurchaseReportContent() {
                     />
                   </div>
                 )}
+              </div>
+            ) : selectedReport === 'item-by-supplier' ? (
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">
+                  สินค้า:
+                </label>
+                <SearchableSelect
+                  value={selectedItemCode || 'ALL'}
+                  onChange={(value) => setSelectedItemCode(value === 'ALL' ? '' : value)}
+                  options={[
+                    { value: 'ALL', label: itemListLoading ? 'กำลังโหลด...' : 'เลือกสินค้า...' },
+                    ...(purchaseItemList || []).map((item) => ({
+                      value: item.itemCode,
+                      label: `[${item.itemCode}] ${item.itemName}`,
+                    })),
+                  ]}
+                  className="w-full sm:w-[380px]"
+                />
               </div>
             ) : undefined
           }

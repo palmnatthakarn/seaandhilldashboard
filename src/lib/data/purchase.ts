@@ -964,6 +964,169 @@ export async function getPurchaseExpenseBreakdown(
 }
 
 /**
+ * Get distinct items purchased within a date range (for item selector dropdown)
+ */
+export async function getDistinctPurchaseItems(
+  dateRange: DateRange,
+  branchSync?: string[]
+): Promise<import('./types').PurchaseItemEntry[]> {
+  try {
+    const branchFilter = buildBranchFilter(branchSync);
+    const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+
+    const query = `
+      SELECT DISTINCT
+        ptd.item_code AS itemCode,
+        ptd.item_name AS itemName,
+        COALESCE(NULLIF(ptd.item_category_name, ''), 'ไม่ระบุหมวดหมู่') AS categoryName
+      FROM purchase_transaction_detail ptd
+      JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND ptd.item_code != ''
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      ORDER BY ptd.item_name ASC
+    `;
+
+    const result = await clickhouse.query({
+      query,
+      query_params: { ...dateParams, ...branchFilter.params },
+      format: 'JSONEachRow',
+    });
+
+    const data = await result.json();
+    return data.map((row: Record<string, unknown>) => ({
+      itemCode: row.itemCode ?? '',
+      itemName: row.itemName ?? '',
+      categoryName: row.categoryName ?? 'ไม่ระบุหมวดหมู่',
+    }));
+  } catch (error) {
+    console.error('Error fetching distinct purchase items:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get suppliers that have supplied a specific item, with purchase summary
+ */
+export async function getItemSuppliers(
+  dateRange: DateRange,
+  itemCode: string,
+  branchSync?: string[]
+): Promise<import('./types').ItemSupplierSummary[]> {
+  try {
+    const branchFilter = buildBranchFilter(branchSync);
+    const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
+
+    const query = `
+      WITH ${returnDocsCte}
+      SELECT
+        pt.supplier_code AS supplierCode,
+        pt.supplier_name AS supplierName,
+        pt.branch_sync AS branchSync,
+        count(DISTINCT pt.doc_no) AS poCount,
+        sum(ptd.qty) AS totalQty,
+        sum(ptd.sum_amount) AS totalAmount,
+        avgIf(ptd.price, ptd.price > 0) AS avgPrice,
+        max(toDate(toTimeZone(pt.doc_datetime, 'Asia/Bangkok'))) AS lastPurchaseDate
+      FROM purchase_transaction_detail ptd
+      JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND ptd.item_code = {item_code:String}
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND coalesce(r.has_return, 0) = 0
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      GROUP BY pt.supplier_code, pt.supplier_name, pt.branch_sync
+      HAVING totalAmount != 0
+      ORDER BY totalAmount DESC
+    `;
+
+    const result = await clickhouse.query({
+      query,
+      query_params: { ...dateParams, ...branchFilter.params, item_code: itemCode },
+      format: 'JSONEachRow',
+    });
+
+    const data = await result.json();
+    return data.map((row: Record<string, unknown>) => ({
+      supplierCode: row.supplierCode ?? '',
+      supplierName: row.supplierName ?? 'ไม่ระบุ',
+      branchSync: String(row.branchSync ?? ''),
+      poCount: Number(row.poCount) || 0,
+      totalQty: Number(row.totalQty) || 0,
+      totalAmount: Number(row.totalAmount) || 0,
+      avgPrice: Number(row.avgPrice) || 0,
+      lastPurchaseDate: String(row.lastPurchaseDate ?? ''),
+    }));
+  } catch (error) {
+    console.error('Error fetching item suppliers:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get full PO purchase history for a specific item (all transactions row by row)
+ */
+export async function getItemPurchaseHistory(
+  dateRange: DateRange,
+  itemCode: string,
+  branchSync?: string[]
+): Promise<import('./types').ItemPurchaseHistory[]> {
+  try {
+    const branchFilter = buildBranchFilter(branchSync);
+    const dateParams = buildDateTimeRangeParamsInclusive(dateRange);
+    const returnDocsCte = buildPurchaseReturnDocsCte('return_docs', 'start_date', 'end_date', branchFilter.sql);
+
+    const query = `
+      WITH ${returnDocsCte}
+      SELECT
+        toDate(toTimeZone(pt.doc_datetime, 'Asia/Bangkok')) AS docDate,
+        pt.doc_no AS docNo,
+        pt.supplier_code AS supplierCode,
+        pt.supplier_name AS supplierName,
+        pt.branch_sync AS branchSync,
+        ptd.unit_code AS unitCode,
+        ptd.qty AS qty,
+        ptd.price AS price,
+        ptd.sum_amount AS totalAmount
+      FROM purchase_transaction_detail ptd
+      JOIN purchase_transaction pt ON ptd.doc_no = pt.doc_no AND ptd.branch_sync = pt.branch_sync
+      LEFT JOIN return_docs r ON pt.doc_no = r.doc_no AND pt.branch_sync = r.branch_sync
+      WHERE pt.status_cancel != 'Cancel'
+        AND ptd.item_code = {item_code:String}
+        AND pt.doc_datetime BETWEEN {start_date:String} AND {end_date:String}
+        AND coalesce(r.has_return, 0) = 0
+        ${branchFilter.sql.replace(/branch_sync/g, 'pt.branch_sync')}
+      ORDER BY docDate DESC, pt.doc_no DESC
+    `;
+
+    const result = await clickhouse.query({
+      query,
+      query_params: { ...dateParams, ...branchFilter.params, item_code: itemCode },
+      format: 'JSONEachRow',
+    });
+
+    const data = await result.json();
+    return data.map((row: Record<string, unknown>) => ({
+      docDate: String(row.docDate ?? ''),
+      docNo: String(row.docNo ?? ''),
+      supplierCode: String(row.supplierCode ?? ''),
+      supplierName: String(row.supplierName ?? 'ไม่ระบุ'),
+      branchSync: String(row.branchSync ?? ''),
+      unitCode: String(row.unitCode ?? ''),
+      qty: Number(row.qty) || 0,
+      price: Number(row.price) || 0,
+      totalAmount: Number(row.totalAmount) || 0,
+    }));
+  } catch (error) {
+    console.error('Error fetching item purchase history:', error);
+    throw error;
+  }
+}
+
+/**
  * Get Detailed PO breakdown for a specific supplier
  * Includes Account Mapping and Item Categories
  */
