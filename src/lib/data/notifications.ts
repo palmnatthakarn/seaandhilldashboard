@@ -135,34 +135,39 @@ async function ensureNotificationLogTable() {
 }
 
 async function shouldSendByDedupe(dedupeKey: string, windowMinutes: number) {
-  await ensureNotificationLogTable();
+  try {
+    await ensureNotificationLogTable();
 
-  const now = new Date();
-  const existing = await authDbClient.execute({
-    sql: 'SELECT sent_at FROM notification_dispatch_log WHERE dedupe_key = ? LIMIT 1',
-    args: [dedupeKey],
-  });
+    const now = new Date();
+    const existing = await authDbClient.execute({
+      sql: 'SELECT sent_at FROM notification_dispatch_log WHERE dedupe_key = ? LIMIT 1',
+      args: [dedupeKey],
+    });
 
-  const row = existing.rows[0] as Record<string, unknown> | undefined;
-  const sentAt = typeof row?.sent_at === 'string' ? row.sent_at : null;
-  if (sentAt) {
-    const elapsedMs = now.getTime() - new Date(sentAt).getTime();
-    const elapsedMinutes = elapsedMs / (1000 * 60);
-    if (elapsedMinutes < windowMinutes) {
-      return false;
+    const row = existing.rows[0] as Record<string, unknown> | undefined;
+    const sentAt = typeof row?.sent_at === 'string' ? row.sent_at : null;
+    if (sentAt) {
+      const elapsedMs = now.getTime() - new Date(sentAt).getTime();
+      const elapsedMinutes = elapsedMs / (1000 * 60);
+      if (elapsedMinutes < windowMinutes) {
+        return false;
+      }
     }
+
+    await authDbClient.execute({
+      sql: `
+        INSERT INTO notification_dispatch_log (dedupe_key, sent_at)
+        VALUES (?, ?)
+        ON CONFLICT(dedupe_key) DO UPDATE SET sent_at = excluded.sent_at
+      `,
+      args: [dedupeKey, now.toISOString()],
+    });
+
+    return true;
+  } catch (error) {
+    console.error('[notifications] dedupe unavailable, fallback to send:', error);
+    return true;
   }
-
-  await authDbClient.execute({
-    sql: `
-      INSERT INTO notification_dispatch_log (dedupe_key, sent_at)
-      VALUES (?, ?)
-      ON CONFLICT(dedupe_key) DO UPDATE SET sent_at = excluded.sent_at
-    `,
-    args: [dedupeKey, now.toISOString()],
-  });
-
-  return true;
 }
 
 async function sendTelegramMessage(text: string): Promise<TelegramSendResult> {
