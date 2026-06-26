@@ -23,7 +23,8 @@ const INCIDENT_BATCH_LIMIT = 5;
 let notificationLogReady: Promise<void> | null = null;
 
 function getNotifyTimezone() {
-  return process.env.NOTIFY_TIMEZONE || DEFAULT_TIMEZONE;
+  const timezone = process.env.NOTIFY_TIMEZONE?.trim();
+  return timezone && timezone.length > 0 ? timezone : DEFAULT_TIMEZONE;
 }
 
 function getDashboardUrl() {
