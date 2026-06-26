@@ -2,13 +2,14 @@ import { authDbClient } from '@/lib/auth-db';
 import { getBranchDailySummaries, getDashboardAlerts, getDashboardKPIs } from '@/lib/data/dashboard';
 import type { Alert } from '@/lib/data/dashboard';
 import type { BranchDailySummary } from '@/lib/data/dashboard';
+import {
+  ensureTelegramChatConfig,
+  listTelegramNotificationTargets,
+  type TelegramNotificationTarget,
+} from '@/lib/data/telegram-config';
+import { sendTelegramMessage as sendTelegramText } from '@/lib/telegram';
 
 type NotifyType = 'incident' | 'daily';
-
-interface TelegramSendResult {
-  ok: boolean;
-  description?: string;
-}
 
 export interface NotificationDispatchResult {
   type: NotifyType;
@@ -51,15 +52,6 @@ function getConfiguredBranches() {
   }
 
   return normalized;
-}
-
-function requireEnv(name: string) {
-  const value = process.env[name];
-  if (!value || value.trim() === '') {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-
-  return value.trim();
 }
 
 function escapeHtml(value: string) {
@@ -185,36 +177,12 @@ async function shouldSendByDedupe(dedupeKey: string, windowMinutes: number) {
   }
 }
 
-async function sendTelegramMessage(text: string): Promise<TelegramSendResult> {
-  const token = requireEnv('TELEGRAM_BOT_TOKEN');
-  const chatId = requireEnv('TELEGRAM_CHAT_ID');
-  const endpoint = `https://api.telegram.org/bot${token}/sendMessage`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    }),
-    cache: 'no-store',
+async function sendTelegramMessage(chatId: string, text: string) {
+  await sendTelegramText({
+    chatId,
+    text,
+    parseMode: 'HTML',
   });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Telegram API error (${response.status}): ${message}`);
-  }
-
-  const payload = (await response.json()) as TelegramSendResult;
-  if (!payload.ok) {
-    throw new Error(payload.description || 'Telegram API returned ok=false');
-  }
-
-  return payload;
 }
 
 function buildIncidentDedupeKey(alert: Alert) {
@@ -224,6 +192,10 @@ function buildIncidentDedupeKey(alert: Alert) {
   const countBucket = alert.count ? Math.ceil(alert.count / 5) * 5 : 0;
   const amountBucket = alert.amount ? Math.ceil(alert.amount / 50000) * 50000 : 0;
   return `incident:${severity}:${category}:${branchKey}:${countBucket}:${amountBucket}`;
+}
+
+function buildIncidentDedupeKeyForTarget(chatId: string, alert: Alert) {
+  return `${chatId}:${buildIncidentDedupeKey(alert)}`;
 }
 
 function formatIncidentMessage(alert: Alert, sentAtIso: string) {
@@ -306,84 +278,124 @@ function formatDailySummaryMessage(input: {
   ].join('\n');
 }
 
+function getLegacyTargetFromEnv(): TelegramNotificationTarget | null {
+  const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
+  if (!chatId) return null;
+
+  return {
+    chatId,
+    enabled: true,
+    timezone: getNotifyTimezone(),
+    branches: getConfiguredBranches(),
+  };
+}
+
+async function getNotificationTargets(): Promise<TelegramNotificationTarget[]> {
+  const legacyTarget = getLegacyTargetFromEnv();
+  if (legacyTarget) {
+    await ensureTelegramChatConfig(legacyTarget.chatId, 'system');
+  }
+
+  const dbTargets = await listTelegramNotificationTargets();
+  if (dbTargets.length > 0) {
+    return dbTargets;
+  }
+
+  return legacyTarget ? [legacyTarget] : [];
+}
+
 export async function dispatchIncidentNotifications(): Promise<NotificationDispatchResult> {
   const windowMinutes = getDedupeWindowMinutes();
   const nowIso = new Date().toISOString();
-  const branches = getConfiguredBranches();
-  const alerts = await getDashboardAlerts(branches);
-  const candidates = alerts
-    .filter((alert) => {
-      const severity = alert.severity || alert.type;
-      return severity === 'warning' || severity === 'error';
-    })
-    .sort((a, b) => severityWeight(a) - severityWeight(b))
-    .slice(0, INCIDENT_BATCH_LIMIT);
+  const targets = await getNotificationTargets();
 
   let sent = 0;
   let skipped = 0;
+  let checked = 0;
 
-  for (const alert of candidates) {
-    const dedupeKey = buildIncidentDedupeKey(alert);
-    const shouldSend = await shouldSendByDedupe(dedupeKey, windowMinutes);
-    if (!shouldSend) {
-      skipped += 1;
-      continue;
+  for (const target of targets) {
+    if (!target.enabled) continue;
+    const alerts = await getDashboardAlerts(target.branches);
+    const candidates = alerts
+      .filter((alert) => {
+        const severity = alert.severity || alert.type;
+        return severity === 'warning' || severity === 'error';
+      })
+      .sort((a, b) => severityWeight(a) - severityWeight(b))
+      .slice(0, INCIDENT_BATCH_LIMIT);
+
+    checked += candidates.length;
+
+    for (const alert of candidates) {
+      const dedupeKey = buildIncidentDedupeKeyForTarget(target.chatId, alert);
+      const shouldSend = await shouldSendByDedupe(dedupeKey, windowMinutes);
+      if (!shouldSend) {
+        skipped += 1;
+        continue;
+      }
+
+      await sendTelegramMessage(target.chatId, formatIncidentMessage(alert, nowIso));
+      sent += 1;
     }
-
-    await sendTelegramMessage(formatIncidentMessage(alert, nowIso));
-    sent += 1;
   }
 
   return {
     type: 'incident',
     sent,
     skipped,
-    checked: candidates.length,
+    checked,
     at: nowIso,
   };
 }
 
 export async function dispatchDailySummary(): Promise<NotificationDispatchResult> {
-  const timezone = getNotifyTimezone();
-  const date = getYesterdayDateInTimezone(timezone);
-  const branches = getConfiguredBranches();
-  const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
-  const dedupeKey = `daily:${date}:${branchSignature}`;
-  const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
   const nowIso = new Date().toISOString();
+  const targets = await getNotificationTargets();
 
-  if (!shouldSend) {
-    return {
-      type: 'daily',
-      sent: 0,
-      skipped: 1,
-      checked: 1,
-      at: nowIso,
-    };
+  let sent = 0;
+  let skipped = 0;
+  let checked = 0;
+
+  for (const target of targets) {
+    if (!target.enabled) continue;
+    const timezone = target.timezone || getNotifyTimezone();
+    const date = getYesterdayDateInTimezone(timezone);
+    const branches = target.branches;
+    const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
+    const dedupeKey = `daily:${target.chatId}:${date}:${branchSignature}`;
+    const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
+    checked += 1;
+
+    if (!shouldSend) {
+      skipped += 1;
+      continue;
+    }
+
+    const [kpis, alerts, branchSummaries] = await Promise.all([
+      getDashboardKPIs(branches, { start: date, end: date }),
+      getDashboardAlerts(branches),
+      getBranchDailySummaries(branches, { start: date, end: date }),
+    ]);
+
+    await sendTelegramMessage(target.chatId, formatDailySummaryMessage({
+      date,
+      branches,
+      totalSales: kpis.totalSales,
+      totalOrders: kpis.totalOrders,
+      totalCustomers: kpis.totalCustomers,
+      avgOrderValue: kpis.avgOrderValue,
+      branchSummaries,
+      alerts,
+    }));
+
+    sent += 1;
   }
-
-  const [kpis, alerts, branchSummaries] = await Promise.all([
-    getDashboardKPIs(branches, { start: date, end: date }),
-    getDashboardAlerts(branches),
-    getBranchDailySummaries(branches, { start: date, end: date }),
-  ]);
-
-  await sendTelegramMessage(formatDailySummaryMessage({
-    date,
-    branches,
-    totalSales: kpis.totalSales,
-    totalOrders: kpis.totalOrders,
-    totalCustomers: kpis.totalCustomers,
-    avgOrderValue: kpis.avgOrderValue,
-    branchSummaries,
-    alerts,
-  }));
 
   return {
     type: 'daily',
-    sent: 1,
-    skipped: 0,
-    checked: 1,
+    sent,
+    skipped,
+    checked,
     at: nowIso,
   };
 }

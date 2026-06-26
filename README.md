@@ -152,6 +152,20 @@ npm run lint         # ตรวจสอบ code style
   - ถ้าไม่ตั้ง หรือใส่ `ALL` = ทุกกิจการ
 - `DASHBOARD_URL` (ไม่บังคับ): ลิงก์ dashboard ที่แสดงในข้อความ Telegram
 
+### Inline Keyboard เลือกกิจการใน Telegram
+
+- ตั้งค่า env เพิ่มใน Vercel:
+  - `TELEGRAM_WEBHOOK_SECRET` (สตริงสุ่ม สำหรับป้องกัน webhook)
+- ตั้ง webhook ให้ bot:
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://seaandhill-dashboard.vercel.app/api/telegram/webhook?secret=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+- คำสั่งในกลุ่ม Telegram:
+  - `/branches` เปิดปุ่มเลือกกิจการ (เฉพาะ owner/admin กลุ่ม)
+  - `/showbranches` ดูรายการกิจการที่ตั้งไว้ปัจจุบัน
+
 เมื่อ push โค้ดแล้ว workflow จะเรียก endpoint นี้ทุก 10 นาที:
 
 `https://seaandhill-dashboard.vercel.app/api/cron/notify/incident`
