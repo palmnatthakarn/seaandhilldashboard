@@ -1,6 +1,7 @@
 import { authDbClient } from '@/lib/auth-db';
-import { getDashboardAlerts, getDashboardKPIs } from '@/lib/data/dashboard';
+import { getBranchDailySummaries, getDashboardAlerts, getDashboardKPIs } from '@/lib/data/dashboard';
 import type { Alert } from '@/lib/data/dashboard';
+import type { BranchDailySummary } from '@/lib/data/dashboard';
 
 type NotifyType = 'incident' | 'daily';
 
@@ -36,6 +37,20 @@ function getDedupeWindowMinutes() {
   const parsed = Number(rawValue);
   if (!rawValue || Number.isNaN(parsed) || parsed <= 0) return 30;
   return parsed;
+}
+
+function getConfiguredBranches() {
+  const rawValue = process.env.NOTIFY_BRANCHES ?? process.env.TELEGRAM_BRANCH_FILTER ?? '';
+  const normalized = rawValue
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (normalized.length === 0 || normalized.includes('ALL')) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 function requireEnv(name: string) {
@@ -230,10 +245,12 @@ function formatIncidentMessage(alert: Alert, sentAtIso: string) {
 
 function formatDailySummaryMessage(input: {
   date: string;
+  branches?: string[];
   totalSales: number;
   totalOrders: number;
   totalCustomers: number;
   avgOrderValue: number;
+  branchSummaries: BranchDailySummary[];
   alerts: Alert[];
 }) {
   const dashboardUrl = getDashboardUrl();
@@ -253,13 +270,29 @@ function formatDailySummaryMessage(input: {
     ? topItems.map((line) => escapeHtml(line)).join('\n')
     : '- ไม่มีเหตุผิดปกติสำคัญ';
 
+  const branchRows = input.branchSummaries.length > 0
+    ? input.branchSummaries
+      .slice(0, 10)
+      .map((branch, index) => `${index + 1}) ${branch.branchName} | ฿${formatCurrency(branch.totalSales)} | ${formatNumber(branch.totalOrders)} บิล | ${formatNumber(branch.totalCustomers)} ลูกค้า`)
+      .map((line) => escapeHtml(line))
+      .join('\n')
+    : '- ไม่พบข้อมูลกิจการในช่วงเวลานี้';
+
+  const scope = input.branches && input.branches.length > 0
+    ? `กิจการที่เลือก: ${escapeHtml(input.branches.join(', '))}`
+    : 'กิจการที่เลือก: ทุกกิจการ';
+
   return [
     `📊 <b>Daily MIS Summary (${escapeHtml(formatThaiDateOnly(`${input.date}T00:00:00.000Z`))})</b>`,
+    `🏢 ${scope}`,
     '',
     `💰 Sales: ฿${formatCurrency(input.totalSales)}`,
     `🧾 Orders: ${formatNumber(input.totalOrders)}`,
     `👥 Customers: ${formatNumber(input.totalCustomers)}`,
     `🛒 Avg/Order: ฿${formatCurrency(input.avgOrderValue)}`,
+    '',
+    '🏬 <b>ยอดแยกตามกิจการ</b>',
+    branchRows,
     '',
     '⚠️ <b>Alerts ตอนนี้</b>',
     `- Error: ${errors}`,
@@ -276,7 +309,8 @@ function formatDailySummaryMessage(input: {
 export async function dispatchIncidentNotifications(): Promise<NotificationDispatchResult> {
   const windowMinutes = getDedupeWindowMinutes();
   const nowIso = new Date().toISOString();
-  const alerts = await getDashboardAlerts();
+  const branches = getConfiguredBranches();
+  const alerts = await getDashboardAlerts(branches);
   const candidates = alerts
     .filter((alert) => {
       const severity = alert.severity || alert.type;
@@ -312,7 +346,9 @@ export async function dispatchIncidentNotifications(): Promise<NotificationDispa
 export async function dispatchDailySummary(): Promise<NotificationDispatchResult> {
   const timezone = getNotifyTimezone();
   const date = getYesterdayDateInTimezone(timezone);
-  const dedupeKey = `daily:${date}`;
+  const branches = getConfiguredBranches();
+  const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
+  const dedupeKey = `daily:${date}:${branchSignature}`;
   const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
   const nowIso = new Date().toISOString();
 
@@ -326,17 +362,20 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     };
   }
 
-  const [kpis, alerts] = await Promise.all([
-    getDashboardKPIs(undefined, { start: date, end: date }),
-    getDashboardAlerts(),
+  const [kpis, alerts, branchSummaries] = await Promise.all([
+    getDashboardKPIs(branches, { start: date, end: date }),
+    getDashboardAlerts(branches),
+    getBranchDailySummaries(branches, { start: date, end: date }),
   ]);
 
   await sendTelegramMessage(formatDailySummaryMessage({
     date,
+    branches,
     totalSales: kpis.totalSales,
     totalOrders: kpis.totalOrders,
     totalCustomers: kpis.totalCustomers,
     avgOrderValue: kpis.avgOrderValue,
+    branchSummaries,
     alerts,
   }));
 

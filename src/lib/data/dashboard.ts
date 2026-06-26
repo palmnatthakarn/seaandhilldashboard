@@ -5,7 +5,7 @@
 
 import { clickhouse } from '../clickhouse';
 import type { DateRange } from './types';
-import { resolveBranchSyncName } from '../branch-names';
+import { resolveBranchName, resolveBranchSyncName } from '../branch-names';
 
 export interface DashboardKPIs {
   totalSales: number;
@@ -37,6 +37,15 @@ export interface RevenueExpenseData {
   revenue: number;
   expense: number;
   profit: number;
+}
+
+export interface BranchDailySummary {
+  branchSync: string;
+  branchName: string;
+  totalSales: number;
+  totalOrders: number;
+  totalCustomers: number;
+  avgOrderValue: number;
 }
 
 export interface RecentSale {
@@ -210,6 +219,68 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
     };
   } catch (error) {
     console.error('Error fetching dashboard KPIs:', error);
+    throw error;
+  }
+}
+
+export async function getBranchDailySummaries(branchSync?: string[], dateRange?: DateRange): Promise<BranchDailySummary[]> {
+  try {
+    const endDate = dateRange?.end || new Date().toISOString().split('T')[0];
+    const startDate = dateRange?.start || endDate;
+    const branchFilter = buildBranchFilter(branchSync);
+
+    const query = `
+      WITH product_docs AS (
+        SELECT
+          si.branch_sync,
+          si.doc_no,
+          any(si.customer_code) AS customer_code,
+          sum(sid.sum_amount) AS product_sales
+        FROM saleinvoice_transaction_detail sid
+        JOIN saleinvoice_transaction si ON sid.doc_no = si.doc_no AND sid.branch_sync = si.branch_sync
+        WHERE si.status_cancel != 'Cancel'
+          AND toDate(si.doc_datetime) >= toDate({startDate:String})
+          AND toDate(si.doc_datetime) <= toDate({endDate:String})
+          ${buildProductSalesKpiFilter('sid')}
+          ${branchFilter.sql.replace(/branch_sync/g, 'si.branch_sync')}
+        GROUP BY si.branch_sync, si.doc_no
+      )
+      SELECT
+        branch_sync AS branchSync,
+        coalesce(sum(product_sales), 0) AS totalSales,
+        count() AS totalOrders,
+        uniq(customer_code) AS totalCustomers
+      FROM product_docs
+      GROUP BY branchSync
+      ORDER BY totalSales DESC
+    `;
+
+    const result = await clickhouse.query({
+      query,
+      query_params: {
+        startDate,
+        endDate,
+        ...branchFilter.params,
+      },
+      format: 'JSONEachRow',
+    });
+
+    const rows = await result.json() as Array<Record<string, unknown>>;
+    return rows.map((row) => {
+      const totalSales = Number(row.totalSales) || 0;
+      const totalOrders = Number(row.totalOrders) || 0;
+
+      return {
+        branchSync: String(row.branchSync || ''),
+        branchName: resolveBranchName(String(row.branchSync || '')),
+        totalSales,
+        totalOrders,
+        totalCustomers: Number(row.totalCustomers) || 0,
+        avgOrderValue: totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0,
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching branch daily summaries:', error);
     throw error;
   }
 }

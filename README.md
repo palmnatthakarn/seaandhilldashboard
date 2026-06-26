@@ -134,6 +134,30 @@ npm run lint         # ตรวจสอบ code style
 
 ---
 
+## ⏰ Cron บน Vercel Hobby (ฟรี)
+
+- Vercel Hobby จำกัด Cron ที่รันได้ไม่ถี่ (เหมาะกับรายวัน)
+- งาน `daily summary` ใช้ `vercel.json` ตามปกติ
+- งาน `incident ทุก 10 นาที` ใช้ GitHub Actions แทนที่ไฟล์:
+  - `.github/workflows/incident-notify.yml`
+
+### GitHub Secrets ที่ต้องตั้ง
+
+- `CRON_SECRET` (ต้องตรงกับค่าเดียวกันที่ตั้งใน Vercel Environment)
+
+### Environment variables ที่เกี่ยวกับการแจ้งเตือนรายกิจการ
+
+- `NOTIFY_BRANCHES` (ไม่บังคับ): กำหนดกิจการที่จะรวมใน daily/incident
+  - ตัวอย่าง: `b000,b002,b005`
+  - ถ้าไม่ตั้ง หรือใส่ `ALL` = ทุกกิจการ
+- `DASHBOARD_URL` (ไม่บังคับ): ลิงก์ dashboard ที่แสดงในข้อความ Telegram
+
+เมื่อ push โค้ดแล้ว workflow จะเรียก endpoint นี้ทุก 10 นาที:
+
+`https://seaandhill-dashboard.vercel.app/api/cron/notify/incident`
+
+---
+
 ## 🧪 การทดสอบ Permission
 
 แก้ไขไฟล์ `src/lib/permissions/mockData.ts`:
