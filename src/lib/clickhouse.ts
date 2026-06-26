@@ -11,6 +11,7 @@
 import { getDatabase, DatabaseType } from './db/index';
 import { getCurrentBranchPolicy } from './auth-policy';
 import { ErrorTypes } from './errors';
+import { getRequestContext } from './request-context';
 
 type QueryOptions = {
   query: string;
@@ -90,6 +91,11 @@ async function applyBranchPolicyToQueryOptions(options: unknown) {
   }
 
   const queryOptions = options as QueryOptions;
+  const requestContext = getRequestContext();
+  if (requestContext?.skipBranchAuth) {
+    return queryOptions;
+  }
+
   const policy = await getCurrentBranchPolicy();
 
   if (!policy.user) {

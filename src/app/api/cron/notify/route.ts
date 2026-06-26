@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dispatchDailySummary, dispatchIncidentNotifications } from '@/lib/data/notifications';
+import { runWithRequestContext } from '@/lib/request-context';
 
 function isAuthorized(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -27,8 +28,8 @@ export async function GET(request: NextRequest) {
     }
 
     const result = type === 'incident'
-      ? await dispatchIncidentNotifications()
-      : await dispatchDailySummary();
+      ? await runWithRequestContext({ skipBranchAuth: true }, async () => dispatchIncidentNotifications())
+      : await runWithRequestContext({ skipBranchAuth: true }, async () => dispatchDailySummary());
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
