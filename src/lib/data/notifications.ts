@@ -343,24 +343,3 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     at: nowIso,
   };
 }
-
-export async function dispatchTestTelegramMessage(): Promise<NotificationDispatchResult> {
-  const nowIso = new Date().toISOString();
-  const messageTime = formatThaiDateTime(nowIso);
-
-  await sendTelegramMessage([
-    '🧪 <b>TEST ALERT</b>',
-    'ระบบ Telegram notifier ส่งข้อความได้แล้ว',
-    `⏰ เวลา: ${escapeHtml(messageTime)}`,
-    `🔗 <a href="${getDashboardUrl()}">เปิด Dashboard</a>`,
-    '#MIS #Test',
-  ].join('\n'));
-
-  return {
-    type: 'incident',
-    sent: 1,
-    skipped: 0,
-    checked: 1,
-    at: nowIso,
-  };
-}
