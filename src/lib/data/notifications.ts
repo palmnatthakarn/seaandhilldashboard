@@ -361,34 +361,40 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     const timezone = target.timezone || getNotifyTimezone();
     const date = getYesterdayDateInTimezone(timezone);
     const branches = target.branches;
-    const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
-    const dedupeKey = `daily:${target.chatId}:${date}:${branchSignature}`;
-    const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
-    checked += 1;
+    const branchSets = branches && branches.length > 1
+      ? branches.map((branchSync) => [branchSync])
+      : [branches];
 
-    if (!shouldSend) {
-      skipped += 1;
-      continue;
+    for (const currentBranches of branchSets) {
+      const branchSignature = currentBranches && currentBranches.length > 0 ? currentBranches.join('|') : 'ALL';
+      const dedupeKey = `daily:${target.chatId}:${date}:${branchSignature}`;
+      const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
+      checked += 1;
+
+      if (!shouldSend) {
+        skipped += 1;
+        continue;
+      }
+
+      const [kpis, alerts, branchSummaries] = await Promise.all([
+        getDashboardKPIs(currentBranches, { start: date, end: date }),
+        getDashboardAlerts(currentBranches),
+        getBranchDailySummaries(currentBranches, { start: date, end: date }),
+      ]);
+
+      await sendTelegramMessage(target.chatId, formatDailySummaryMessage({
+        date,
+        branches: currentBranches,
+        totalSales: kpis.totalSales,
+        totalOrders: kpis.totalOrders,
+        totalCustomers: kpis.totalCustomers,
+        avgOrderValue: kpis.avgOrderValue,
+        branchSummaries,
+        alerts,
+      }));
+
+      sent += 1;
     }
-
-    const [kpis, alerts, branchSummaries] = await Promise.all([
-      getDashboardKPIs(branches, { start: date, end: date }),
-      getDashboardAlerts(branches),
-      getBranchDailySummaries(branches, { start: date, end: date }),
-    ]);
-
-    await sendTelegramMessage(target.chatId, formatDailySummaryMessage({
-      date,
-      branches,
-      totalSales: kpis.totalSales,
-      totalOrders: kpis.totalOrders,
-      totalCustomers: kpis.totalCustomers,
-      avgOrderValue: kpis.avgOrderValue,
-      branchSummaries,
-      alerts,
-    }));
-
-    sent += 1;
   }
 
   return {
