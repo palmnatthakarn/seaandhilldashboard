@@ -232,7 +232,7 @@ export async function getBranchDailySummaries(branchSync?: string[], dateRange?:
     const query = `
       WITH product_docs AS (
         SELECT
-          si.branch_sync,
+          si.branch_sync AS branch_sync,
           si.doc_no,
           any(si.customer_code) AS customer_code,
           sum(sid.sum_amount) AS product_sales
