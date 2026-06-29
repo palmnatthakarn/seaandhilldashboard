@@ -1,0 +1,25 @@
+name: Incident Notify (Free)
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-incident-endpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call production incident endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          INCIDENT_URL: https://seaandhill-dashboard.vercel.app/api/cron/notify/incident
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET is missing in GitHub repository secrets"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            --request GET \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$INCIDENT_URL"

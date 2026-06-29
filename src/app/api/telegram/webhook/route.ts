@@ -165,62 +165,70 @@ async function handleBranchCallback(callback: TelegramCallbackQuery) {
   const message = callback.message;
   if (!message) return;
 
-  const chatId = String(message.chat.id);
-  const actor = userLabel(callback.from);
-  const allowed = await canManageChat(chatId, callback.from.id);
-  if (!allowed) {
-    await answerTelegramCallbackQuery({
-      callbackQueryId: callback.id,
-      text: 'เฉพาะ owner/admin ที่แก้ได้',
-    });
-    return;
-  }
+  try {
+    const chatId = String(message.chat.id);
+    const actor = userLabel(callback.from);
+    const allowed = await canManageChat(chatId, callback.from.id);
+    if (!allowed) {
+      await answerTelegramCallbackQuery({
+        callbackQueryId: callback.id,
+        text: 'เฉพาะ owner/admin ที่แก้ได้',
+      });
+      return;
+    }
 
-  await ensureTelegramChatConfig(chatId, actor);
-  let selected = await getTelegramChatDraftBranches(chatId);
+    await ensureTelegramChatConfig(chatId, actor);
+    let selected = await getTelegramChatDraftBranches(chatId);
 
-  const action = callback.data || '';
-  if (action.startsWith('branch:toggle:')) {
-    const branchSync = action.replace('branch:toggle:', '');
-    const exists = selected.includes(branchSync);
-    selected = exists
-      ? selected.filter((item) => item !== branchSync)
-      : [...selected, branchSync];
-    await setTelegramChatDraftBranches(chatId, selected, actor);
-  } else if (action === 'branch:all') {
-    selected = branchOptions.map((item) => item.branchSync);
-    await setTelegramChatDraftBranches(chatId, selected, actor);
-  } else if (action === 'branch:none') {
-    selected = [];
-    await setTelegramChatDraftBranches(chatId, selected, actor);
-  } else if (action === 'branch:save') {
-    await applyTelegramChatDraft(chatId, actor);
-    const target = await getTelegramChatTarget(chatId);
-    const resultText = target.branches && target.branches.length > 0
-      ? `บันทึกเรียบร้อย: <code>${target.branches.join(', ')}</code>`
-      : 'บันทึกเรียบร้อย: <code>ทุกกิจการ</code>';
+    const action = callback.data || '';
+    if (action.startsWith('branch:toggle:')) {
+      const branchSync = action.replace('branch:toggle:', '');
+      const exists = selected.includes(branchSync);
+      selected = exists
+        ? selected.filter((item) => item !== branchSync)
+        : [...selected, branchSync];
+      await setTelegramChatDraftBranches(chatId, selected, actor);
+    } else if (action === 'branch:all') {
+      selected = branchOptions.map((item) => item.branchSync);
+      await setTelegramChatDraftBranches(chatId, selected, actor);
+    } else if (action === 'branch:none') {
+      selected = [];
+      await setTelegramChatDraftBranches(chatId, selected, actor);
+    } else if (action === 'branch:save') {
+      await applyTelegramChatDraft(chatId, actor);
+      const target = await getTelegramChatTarget(chatId);
+      const resultText = target.branches && target.branches.length > 0
+        ? `บันทึกเรียบร้อย: <code>${target.branches.join(', ')}</code>`
+        : 'บันทึกเรียบร้อย: <code>ทุกกิจการ</code>';
 
-    await answerTelegramCallbackQuery({
-      callbackQueryId: callback.id,
-      text: 'บันทึกแล้ว',
-    });
+      await answerTelegramCallbackQuery({
+        callbackQueryId: callback.id,
+        text: 'บันทึกแล้ว',
+      });
 
+      await editTelegramMessage({
+        chatId,
+        messageId: message.message_id,
+        text: `✅ ${resultText}`,
+      });
+      return;
+    }
+
+    const latest = await getTelegramChatDraftBranches(chatId);
+    await answerTelegramCallbackQuery({ callbackQueryId: callback.id });
     await editTelegramMessage({
       chatId,
       messageId: message.message_id,
-      text: `✅ ${resultText}`,
+      text: buildBranchPanelText(latest),
+      replyMarkup: buildBranchKeyboard(latest),
     });
-    return;
+  } catch (error) {
+    console.error('[webhook] handleBranchCallback error:', error);
+    await answerTelegramCallbackQuery({
+      callbackQueryId: callback.id,
+      text: 'เกิดข้อผิดพลาด กรุณาลองใหม่',
+    }).catch(() => {});
   }
-
-  const latest = await getTelegramChatDraftBranches(chatId);
-  await answerTelegramCallbackQuery({ callbackQueryId: callback.id });
-  await editTelegramMessage({
-    chatId,
-    messageId: message.message_id,
-    text: buildBranchPanelText(latest),
-    replyMarkup: buildBranchKeyboard(latest),
-  });
 }
 
 function formatBranchCardFromCache(
@@ -375,42 +383,63 @@ async function handleDailyCarouselCallback(callback: TelegramCallbackQuery) {
   const message = callback.message;
   if (!message || !callback.data) return;
 
-  const chatId = String(message.chat.id);
-  const messageId = message.message_id;
-  const cache = await getCarouselCache(chatId, messageId);
-  if (!cache) {
+  try {
+    const chatId = String(message.chat.id);
+    const messageId = message.message_id;
+    const cache = await getCarouselCache(chatId, messageId);
+    if (!cache) {
+      await answerTelegramCallbackQuery({
+        callbackQueryId: callback.id,
+        text: 'ข้อมูลหมดอายุ กรุณารอรายงานใหม่',
+      });
+      return;
+    }
+
+    const branchSync = callback.data.slice(2);
+    const activeSync = branchSync === 'ov' ? 'ov' : branchSync;
+    const keyboard = buildCarouselKeyboardFromCache(cache, activeSync);
+
+    if (branchSync === 'ov') {
+      const card = formatOverviewCardFromCache(cache, cache.date);
+      if (!card) return;
+      await editTelegramMessage({ chatId, messageId, text: card, replyMarkup: keyboard });
+    } else {
+      const card = formatBranchCardFromCache(cache, branchSync, cache.date);
+      if (!card) return;
+      await editTelegramMessage({ chatId, messageId, text: card, replyMarkup: keyboard });
+    }
+
+    await answerTelegramCallbackQuery({ callbackQueryId: callback.id });
+  } catch (error) {
+    console.error('[webhook] handleDailyCarouselCallback error:', error);
     await answerTelegramCallbackQuery({
       callbackQueryId: callback.id,
-      text: 'ข้อมูลหมดอายุ กรุณารอรายงานใหม่',
-    });
-    return;
+      text: 'เกิดข้อผิดพลาด',
+    }).catch(() => {});
   }
-
-  const branchSync = callback.data.slice(2);
-  const activeSync = branchSync === 'ov' ? 'ov' : branchSync;
-  const keyboard = buildCarouselKeyboardFromCache(cache, activeSync);
-
-  if (branchSync === 'ov') {
-    const card = formatOverviewCardFromCache(cache, cache.date);
-    if (!card) return;
-    await editTelegramMessage({ chatId, messageId, text: card, replyMarkup: keyboard });
-  } else {
-    const card = formatBranchCardFromCache(cache, branchSync, cache.date);
-    if (!card) return;
-    await editTelegramMessage({ chatId, messageId, text: card, replyMarkup: keyboard });
-  }
-
-  await answerTelegramCallbackQuery({ callbackQueryId: callback.id });
 }
 
 async function handleCallbackQuery(update: TelegramUpdate) {
   const callback = update.callback_query;
   if (!callback?.data) return;
 
-  if (callback.data.startsWith('branch:')) {
-    await handleBranchCallback(callback);
-  } else if (callback.data.startsWith('d:')) {
-    await handleDailyCarouselCallback(callback);
+  try {
+    if (callback.data.startsWith('branch:')) {
+      await handleBranchCallback(callback);
+    } else if (callback.data.startsWith('d:')) {
+      await handleDailyCarouselCallback(callback);
+    } else {
+      await answerTelegramCallbackQuery({
+        callbackQueryId: callback.id,
+        text: 'คำสั่งไม่ถูกต้อง',
+      });
+    }
+  } catch (error) {
+    console.error('[webhook] handleCallbackQuery error:', error);
+    await answerTelegramCallbackQuery({
+      callbackQueryId: callback.id,
+      text: 'เกิดข้อผิดพลาด',
+    }).catch(() => {});
   }
 }
 
