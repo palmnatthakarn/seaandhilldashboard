@@ -1,3 +1,4 @@
+import { resolveBranchName } from '@/lib/branch-names';
 import { authDbClient } from '@/lib/auth-db';
 import { getBranchDailySummaries, getDashboardAlerts, getDashboardKPIs } from '@/lib/data/dashboard';
 import type { Alert } from '@/lib/data/dashboard';
@@ -250,11 +251,15 @@ function formatDailySummaryMessage(input: {
       .join('\n')
     : '- ไม่พบข้อมูลกิจการในช่วงเวลานี้';
 
-  const scope = input.branches && input.branches.length > 0
-    ? `กิจการที่เลือก: ${escapeHtml(input.branches.join(', '))}`
-    : 'กิจการที่เลือก: ทุกกิจการ';
+  const isSingleBranch = input.branches && input.branches.length === 1;
 
-  return [
+  const scope = isSingleBranch
+    ? `กิจการที่เลือก: ${escapeHtml(resolveBranchName(input.branches![0]))}`
+    : input.branches && input.branches.length > 0
+      ? `กิจการที่เลือก: ${escapeHtml(input.branches.join(', '))}`
+      : 'กิจการที่เลือก: ทุกกิจการ';
+
+  const summaryLines = [
     `📊 <b>Daily MIS Summary (${escapeHtml(formatThaiDateOnly(`${input.date}T00:00:00.000Z`))})</b>`,
     `🏢 ${scope}`,
     '',
@@ -262,10 +267,17 @@ function formatDailySummaryMessage(input: {
     `🧾 Orders: ${formatNumber(input.totalOrders)}`,
     `👥 Customers: ${formatNumber(input.totalCustomers)}`,
     `🛒 Avg/Order: ฿${formatCurrency(input.avgOrderValue)}`,
-    '',
-    '🏬 <b>ยอดแยกตามกิจการ</b>',
-    branchRows,
-    '',
+  ];
+
+  if (!isSingleBranch) {
+    summaryLines.push(
+      '',
+      '🏬 <b>ยอดแยกตามกิจการ</b>',
+      branchRows,
+    );
+  }
+
+  summaryLines.push('',
     '⚠️ <b>Alerts ตอนนี้</b>',
     `- Error: ${errors}`,
     `- Warning: ${warnings}`,
@@ -275,7 +287,9 @@ function formatDailySummaryMessage(input: {
     '',
     `🔗 <a href="${dashboardUrl}">เปิด Dashboard</a>`,
     '#MIS #DailyReport',
-  ].join('\n');
+  );
+
+  return summaryLines.join('\n');
 }
 
 function getLegacyTargetFromEnv(): TelegramNotificationTarget | null {
