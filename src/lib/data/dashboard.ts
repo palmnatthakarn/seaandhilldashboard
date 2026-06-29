@@ -246,12 +246,12 @@ export async function getBranchDailySummaries(branchSync?: string[], dateRange?:
         GROUP BY si.branch_sync, si.doc_no
       )
       SELECT
-        branch_sync AS branchSync,
+        branch_sync,
         coalesce(sum(product_sales), 0) AS totalSales,
         count() AS totalOrders,
         uniq(customer_code) AS totalCustomers
       FROM product_docs
-      GROUP BY branchSync
+      GROUP BY branch_sync
       ORDER BY totalSales DESC
     `;
 
@@ -271,8 +271,8 @@ export async function getBranchDailySummaries(branchSync?: string[], dateRange?:
       const totalOrders = Number(row.totalOrders) || 0;
 
       return {
-        branchSync: String(row.branchSync || ''),
-        branchName: resolveBranchName(String(row.branchSync || '')),
+        branchSync: String(row.branch_sync || ''),
+        branchName: resolveBranchName(String(row.branch_sync || '')),
         totalSales,
         totalOrders,
         totalCustomers: Number(row.totalCustomers) || 0,
