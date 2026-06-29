@@ -53,13 +53,15 @@ export async function sendTelegramMessage(params: {
   parseMode?: 'HTML' | 'MarkdownV2';
   replyMarkup?: TelegramInlineKeyboardMarkup;
 }) {
-  await callTelegramApi('sendMessage', {
+  const result = await callTelegramApi<{ message_id: number }>('sendMessage', {
     chat_id: params.chatId,
     text: params.text,
     parse_mode: params.parseMode || 'HTML',
     disable_web_page_preview: true,
     ...(params.replyMarkup ? { reply_markup: params.replyMarkup } : {}),
   });
+
+  return result?.message_id;
 }
 
 export async function editTelegramMessage(params: {

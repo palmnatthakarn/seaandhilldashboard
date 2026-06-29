@@ -238,3 +238,92 @@ export async function applyTelegramChatDraft(chatId: string, updatedBy: string) 
     });
   }
 }
+
+export interface CarouselCacheData {
+  date: string;
+  branches: string[];
+  kpis: {
+    totalSales: number;
+    totalOrders: number;
+    totalCustomers: number;
+    avgOrderValue: number;
+  };
+  branchSummaries: Array<{
+    branchSync: string;
+    branchName: string;
+    totalSales: number;
+    totalOrders: number;
+    totalCustomers: number;
+    avgOrderValue: number;
+  }>;
+  alerts: Array<{
+    severity?: string;
+    type?: string;
+    title: string;
+    message: string;
+    branchSync?: string;
+    branchName?: string;
+    count?: number;
+    amount?: number;
+    category?: string;
+  }>;
+}
+
+let carouselCacheReady: Promise<void> | null = null;
+
+async function ensureCarouselCacheTable() {
+  carouselCacheReady ??= (async () => {
+    await authDbClient.execute(`
+      CREATE TABLE IF NOT EXISTS telegram_carousel_cache (
+        chat_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (chat_id, message_id)
+      )
+    `);
+  })();
+
+  await carouselCacheReady;
+}
+
+export async function storeCarouselCache(
+  chatId: string,
+  messageId: number,
+  data: CarouselCacheData,
+) {
+  await ensureCarouselCacheTable();
+  const now = new Date().toISOString();
+  await authDbClient.execute({
+    sql: `
+      INSERT INTO telegram_carousel_cache (chat_id, message_id, date, data_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(chat_id, message_id) DO UPDATE SET
+        date = excluded.date,
+        data_json = excluded.data_json,
+        created_at = excluded.created_at
+    `,
+    args: [chatId, messageId, data.date, JSON.stringify(data), now],
+  });
+}
+
+export async function getCarouselCache(
+  chatId: string,
+  messageId: number,
+): Promise<CarouselCacheData | null> {
+  await ensureCarouselCacheTable();
+  const result = await authDbClient.execute({
+    sql: 'SELECT data_json FROM telegram_carousel_cache WHERE chat_id = ? AND message_id = ? LIMIT 1',
+    args: [chatId, messageId],
+  });
+
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row || typeof row.data_json !== 'string') return null;
+
+  try {
+    return JSON.parse(row.data_json) as CarouselCacheData;
+  } catch {
+    return null;
+  }
+}

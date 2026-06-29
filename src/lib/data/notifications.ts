@@ -1,4 +1,4 @@
-import { resolveBranchName } from '@/lib/branch-names';
+import { BRANCH_SYNC_MAP, resolveBranchName } from '@/lib/branch-names';
 import { authDbClient } from '@/lib/auth-db';
 import { getBranchDailySummaries, getDashboardAlerts, getDashboardKPIs } from '@/lib/data/dashboard';
 import type { Alert } from '@/lib/data/dashboard';
@@ -6,9 +6,10 @@ import type { BranchDailySummary } from '@/lib/data/dashboard';
 import {
   ensureTelegramChatConfig,
   listTelegramNotificationTargets,
+  storeCarouselCache,
   type TelegramNotificationTarget,
 } from '@/lib/data/telegram-config';
-import { sendTelegramMessage as sendTelegramText } from '@/lib/telegram';
+import { sendTelegramMessage as sendTelegramText, type TelegramInlineKeyboardMarkup } from '@/lib/telegram';
 
 type NotifyType = 'incident' | 'daily';
 
@@ -178,11 +179,12 @@ async function shouldSendByDedupe(dedupeKey: string, windowMinutes: number) {
   }
 }
 
-async function sendTelegramMessage(chatId: string, text: string) {
-  await sendTelegramText({
+async function sendTelegramMessage(chatId: string, text: string, replyMarkup?: TelegramInlineKeyboardMarkup) {
+  return sendTelegramText({
     chatId,
     text,
     parseMode: 'HTML',
+    replyMarkup,
   });
 }
 
@@ -292,6 +294,82 @@ function formatDailySummaryMessage(input: {
   return summaryLines.join('\n');
 }
 
+function formatBranchCard(
+  summary: BranchDailySummary,
+  date: string,
+  branchSync: string,
+  alerts: Alert[],
+) {
+  const dashboardUrl = getDashboardUrl();
+  const branchAlerts = alerts.filter(
+    (a) => !a.branchSync || a.branchSync === branchSync,
+  );
+  const errors = branchAlerts.filter((a) => (a.severity || a.type) === 'error').length;
+  const warnings = branchAlerts.filter((a) => (a.severity || a.type) === 'warning').length;
+
+  const topItems = [...branchAlerts]
+    .sort((a, b) => {
+      const severityDelta = severityWeight(a) - severityWeight(b);
+      if (severityDelta !== 0) return severityDelta;
+      return (b.count || 0) - (a.count || 0);
+    })
+    .slice(0, 2)
+    .map((alert, index) => `${index + 1}) ${alert.title} - ${alert.message}`);
+
+  const topSection = topItems.length > 0
+    ? topItems.map((line) => escapeHtml(line)).join('\n')
+    : '- ไม่มีเหตุผิดปกติ';
+
+  return [
+    `📊 <b>Daily MIS Summary (${escapeHtml(formatThaiDateOnly(`${date}T00:00:00.000Z`))})</b>`,
+    `🏢 ${escapeHtml(summary.branchName)}`,
+    '',
+    `💰 ยอดขาย: ฿${formatCurrency(summary.totalSales)}`,
+    `🧾 ออเดอร์: ${formatNumber(summary.totalOrders)} บิล`,
+    `👥 ลูกค้า: ${formatNumber(summary.totalCustomers)} คน`,
+    `🛒 Avg/Order: ฿${formatCurrency(summary.avgOrderValue)}`,
+    '',
+    '⚠️ <b>Alerts</b>',
+    `- Error: ${errors}`,
+    `- Warning: ${warnings}`,
+    '',
+    '🔥 <b>Top Alert</b>',
+    topSection,
+    '',
+    `🔗 <a href="${dashboardUrl}">เปิด Dashboard</a>`,
+    '#MIS #DailyReport',
+  ].join('\n');
+}
+
+function buildCarouselKeyboard(
+  branchSummaries: BranchDailySummary[],
+  activeSync: string,
+): TelegramInlineKeyboardMarkup {
+  const rows: TelegramInlineKeyboardMarkup['inline_keyboard'] = [];
+  const row: TelegramInlineKeyboardMarkup['inline_keyboard'][number] = [];
+
+  for (let i = 0; i < branchSummaries.length; i++) {
+    const s = branchSummaries[i];
+    const isActive = s.branchSync === activeSync;
+    const shortName = BRANCH_SYNC_MAP[s.branchSync]?.split(' ').slice(0, 2).join(' ') || s.branchSync;
+    const label = isActive ? `📌 ${shortName}` : shortName;
+
+    row.push({
+      text: label,
+      callback_data: `d:${s.branchSync}`,
+    });
+
+    if (row.length === 3 || i === branchSummaries.length - 1) {
+      rows.push([...row]);
+      row.length = 0;
+    }
+  }
+
+  rows.push([{ text: activeSync === 'ov' ? '📌 ภาพรวม' : '📊 ภาพรวม', callback_data: 'd:ov' }]);
+
+  return { inline_keyboard: rows };
+}
+
 function getLegacyTargetFromEnv(): TelegramNotificationTarget | null {
   const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
   if (!chatId) return null;
@@ -375,40 +453,82 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     const timezone = target.timezone || getNotifyTimezone();
     const date = getYesterdayDateInTimezone(timezone);
     const branches = target.branches;
-    const branchSets = branches && branches.length > 1
-      ? branches.map((branchSync) => [branchSync])
-      : [branches];
+    const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
+    const dedupeKey = `daily:${target.chatId}:${date}:${branchSignature}`;
+    const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
+    checked += 1;
 
-    for (const currentBranches of branchSets) {
-      const branchSignature = currentBranches && currentBranches.length > 0 ? currentBranches.join('|') : 'ALL';
-      const dedupeKey = `daily:${target.chatId}:${date}:${branchSignature}`;
-      const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
-      checked += 1;
-
-      if (!shouldSend) {
-        skipped += 1;
-        continue;
-      }
-
-      const [kpis, alerts, branchSummaries] = await Promise.all([
-        getDashboardKPIs(currentBranches, { start: date, end: date }),
-        getDashboardAlerts(currentBranches),
-        getBranchDailySummaries(currentBranches, { start: date, end: date }),
-      ]);
-
-      await sendTelegramMessage(target.chatId, formatDailySummaryMessage({
-        date,
-        branches: currentBranches,
-        totalSales: kpis.totalSales,
-        totalOrders: kpis.totalOrders,
-        totalCustomers: kpis.totalCustomers,
-        avgOrderValue: kpis.avgOrderValue,
-        branchSummaries,
-        alerts,
-      }));
-
-      sent += 1;
+    if (!shouldSend) {
+      skipped += 1;
+      continue;
     }
+
+    const [kpis, alerts, branchSummaries] = await Promise.all([
+      getDashboardKPIs(branches, { start: date, end: date }),
+      getDashboardAlerts(branches),
+      getBranchDailySummaries(branches, { start: date, end: date }),
+    ]);
+
+    const overviewCard = formatDailySummaryMessage({
+      date,
+      branches,
+      totalSales: kpis.totalSales,
+      totalOrders: kpis.totalOrders,
+      totalCustomers: kpis.totalCustomers,
+      avgOrderValue: kpis.avgOrderValue,
+      branchSummaries,
+      alerts,
+    });
+
+    const activeSync = branchSummaries.length > 0 ? branchSummaries[0].branchSync : 'ov';
+    const firstCard = activeSync === 'ov'
+      ? overviewCard
+      : formatBranchCard(
+          branchSummaries.find((s) => s.branchSync === activeSync)!,
+          date,
+          activeSync,
+          alerts,
+        );
+
+    const messageId = await sendTelegramMessage(
+      target.chatId,
+      firstCard,
+      buildCarouselKeyboard(branchSummaries, activeSync),
+    );
+
+    if (messageId && branches) {
+      await storeCarouselCache(target.chatId, messageId, {
+        date,
+        branches,
+        kpis: {
+          totalSales: kpis.totalSales,
+          totalOrders: kpis.totalOrders,
+          totalCustomers: kpis.totalCustomers,
+          avgOrderValue: kpis.avgOrderValue,
+        },
+        branchSummaries: branchSummaries.map((s) => ({
+          branchSync: s.branchSync,
+          branchName: s.branchName,
+          totalSales: s.totalSales,
+          totalOrders: s.totalOrders,
+          totalCustomers: s.totalCustomers,
+          avgOrderValue: s.avgOrderValue,
+        })),
+        alerts: alerts.map((a) => ({
+          severity: a.severity,
+          type: a.type,
+          title: a.title,
+          message: a.message,
+          branchSync: a.branchSync,
+          branchName: a.branchName,
+          count: a.count,
+          amount: a.amount,
+          category: a.category,
+        })),
+      });
+    }
+
+    sent += 1;
   }
 
   return {
