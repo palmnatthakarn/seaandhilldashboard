@@ -58,6 +58,14 @@ interface ClickHouseClient {
   [key: string]: unknown;
 }
 
+/** Add SETTINGS final=1 to SELECT/WITH queries for ReplacingMergeTree dedup */
+function injectFinalSetting(query: string): string {
+  const trimmed = query.trim();
+  if (!/^(SELECT|WITH)\b/i.test(trimmed)) return query;
+  if (/\bSETTINGS\b/i.test(trimmed)) return query;
+  return trimmed.replace(/;+$/, '') + ' SETTINGS final = 1';
+}
+
 function injectBranchPolicy(query: string): string {
   if (!/\bselect\b/i.test(query) || !/\bbranch_sync\b/i.test(query)) {
     return query;
@@ -146,9 +154,15 @@ export const clickhouse: ClickHouseClient = new Proxy({} as ClickHouseClient, {
 
       const method = (client as Record<PropertyKey, unknown>)[prop];
       if (typeof method === 'function') {
-        const finalArgs = prop === 'query' && args.length > 0
+        let finalArgs = prop === 'query' && args.length > 0
           ? [await applyBranchPolicyToQueryOptions(args[0]), ...args.slice(1)]
           : args;
+        if (prop === 'query' && finalArgs.length > 0 && finalArgs[0]) {
+          const opts = finalArgs[0] as QueryOptions;
+          if (typeof opts.query === 'string') {
+            opts.query = injectFinalSetting(opts.query);
+          }
+        }
         return Reflect.apply(method, client, finalArgs);
       }
       return method;

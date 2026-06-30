@@ -12,6 +12,7 @@ export async function getHomeDashboardData() {
                     sumIf(total_amount, toYYYYMM(doc_datetime) = toYYYYMM(now())) as month_sales,
                     count(doc_no) as total_orders
                 FROM saleinvoice_transaction
+                WHERE status_cancel != 'Cancel'
             `,
             format: 'JSONEachRow',
         });
