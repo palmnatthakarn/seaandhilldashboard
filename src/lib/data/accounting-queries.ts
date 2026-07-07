@@ -60,6 +60,7 @@ export function getAssetsQuery(dateRange: DateRange, branchSync?: string[]): str
     WHERE ${typeFilter}
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -79,6 +80,7 @@ export function getLiabilitiesQuery(dateRange: DateRange, branchSync?: string[])
     WHERE ${typeFilter}
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -98,6 +100,7 @@ export function getEquityQuery(dateRange: DateRange, branchSync?: string[]): str
     WHERE ${typeFilter}
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -117,6 +120,7 @@ export function getRevenueQuery(dateRange: DateRange, branchSync?: string[]): st
     WHERE ${typeFilter}
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -136,6 +140,7 @@ export function getExpensesQuery(dateRange: DateRange, branchSync?: string[]): s
     WHERE ${typeFilter}
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -153,6 +158,7 @@ export function getProfitLossQuery(dateRange: DateRange, branchSync?: string[]):
       ${branchFilter}
     GROUP BY month
     ORDER BY month ASC
+    SETTINGS final = 1
   `;
 }
 
@@ -183,6 +189,7 @@ export function getBalanceSheetQuery(dateRange: DateRange, branchSync?: string[]
       ${branchFilter}
     GROUP BY account_type, accountType, typeName, account_code, account_name
     ORDER BY account_code ASC
+    SETTINGS final = 1
   `;
 }
 
@@ -212,6 +219,7 @@ export function getCashFlowQuery(dateRange: DateRange, branchSync?: string[]): s
     WHERE (account_code LIKE '21%' OR ${accountTypeFilter(['EQUITY'])})
       AND ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
       ${branchFilter}
+    SETTINGS final = 1
   `;
 }
 
@@ -299,6 +307,7 @@ export function getRevenueBreakdownQuery(dateRange: DateRange, branchSync?: stri
     GROUP BY account_code, account_name
     HAVING amount != 0
     ORDER BY amount DESC
+    SETTINGS final = 1
   `;
 }
 
@@ -324,6 +333,7 @@ export function getExpenseBreakdownQuery(dateRange: DateRange, branchSync?: stri
     GROUP BY account_code, account_name
     HAVING amount != 0
     ORDER BY amount DESC
+    SETTINGS final = 1
   `;
 }
 
@@ -378,6 +388,7 @@ export function getProfitLossByProductCategoryQuery(dateRange: DateRange, branch
       ON s.doc_no = j.doc_no AND s.branch_sync = j.branch_sync
     GROUP BY s.item_category_code, s.item_category_name, j.account_type, j.account_code, j.account_name
     ORDER BY j.account_type, revenue DESC
+    SETTINGS final = 1
   `;
 }
 
@@ -400,6 +411,7 @@ export function getAccountTypeQuery(accountCode: string): string {
     FROM journal_transaction_detail
     WHERE account_code = '${accountCode}'
     LIMIT 1
+    SETTINGS final = 1
   `;
 }
 
@@ -433,6 +445,7 @@ export function getChartOfAccountsListQuery(dateRange: DateRange, branchSync?: s
     GROUP BY j.account_code, j.account_name, j.account_type
     HAVING netAmount != 0
     ORDER BY accountType, j.account_code
+    SETTINGS final = 1
   `;
 }
 
@@ -483,6 +496,7 @@ export function getAccountProductsQuery(
       AND jd.branch_sync = std.branch_sync
       AND std.status_cancel != 'Cancel'
     ORDER BY jd.doc_datetime DESC, jd.doc_no DESC, std.item_code ASC
+    SETTINGS final = 1
   `;
 }
 
@@ -532,5 +546,6 @@ export function getAccountPurchaseItemsQuery(
       ON jd.doc_no = ptd.doc_no
       AND jd.branch_sync = ptd.branch_sync
     ORDER BY jd.doc_datetime DESC, jd.doc_no DESC, ptd.item_code ASC
+    SETTINGS final = 1
   `;
 }
