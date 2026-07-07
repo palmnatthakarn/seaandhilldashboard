@@ -269,6 +269,11 @@ function formatBranchCardFromCache(
   const fmtCur = (v: number) => new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   const fmtDate = (isoDate: string) => new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(`${isoDate}T00:00:00.000Z`));
 
+  const branchProfit = cache.profitSummaries.find((p) => p.branchSync === branchSync)?.profit;
+  const profitLine = branchProfit === undefined
+    ? 'ไม่พบข้อมูล'
+    : `${branchProfit < 0 ? '-' : '+'}฿${fmtCur(Math.abs(branchProfit))}${branchProfit < 0 ? ' (ขาดทุน)' : ''}`;
+
   return [
     `📊 <b>Daily MIS Summary (${fmtDate(date)})</b>`,
     `🏢 ${summary.branchName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}`,
@@ -277,6 +282,8 @@ function formatBranchCardFromCache(
     `🧾 ออเดอร์: ${fmtNum(summary.totalOrders)} บิล`,
     `👥 ลูกค้า: ${fmtNum(summary.totalCustomers)} คน`,
     `🛒 Avg/Order: ฿${fmtCur(summary.avgOrderValue)}`,
+    '',
+    `📊 กำไร/ขาดทุน (${cache.profitMonthLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}): ${profitLine}`,
     '',
     '⚠️ <b>Alerts</b>',
     `- Error: ${errors}`,
@@ -326,6 +333,13 @@ function formatOverviewCardFromCache(
         .join('\n')
     : '- ไม่พบข้อมูลกิจการในช่วงเวลานี้';
 
+  const profitRows = cache.profitSummaries.length > 0
+    ? [...cache.profitSummaries]
+        .sort((a, b) => b.profit - a.profit)
+        .map((p, index) => `${index + 1}) ${escHtml(resolveBranchName(p.branchSync))} | ${p.profit < 0 ? '-' : '+'}฿${fmtCur(Math.abs(p.profit))}${p.profit < 0 ? ' (ขาดทุน)' : ''}`)
+        .join('\n')
+    : '- ไม่พบข้อมูลในช่วงเวลานี้';
+
   return [
     `📊 <b>Daily MIS Summary (${fmtDate(date)})</b>`,
     `🏢 ${cache.branches.length > 0 ? `กิจการที่เลือก: ${escHtml(cache.branches.map((b) => resolveBranchName(b)).join(', '))}` : 'กิจการที่เลือก: ทุกกิจการ'}`,
@@ -337,6 +351,9 @@ function formatOverviewCardFromCache(
     '',
     '🏬 <b>ยอดแยกตามกิจการ</b>',
     branchRows,
+    '',
+    `📊 <b>กำไร/ขาดทุนรายกิจการ (${escHtml(cache.profitMonthLabel)})</b>`,
+    profitRows,
     '',
     '⚠️ <b>Alerts ตอนนี้</b>',
     `- Error: ${errors}`,

@@ -267,6 +267,8 @@ export interface CarouselCacheData {
     amount?: number;
     category?: string;
   }>;
+  profitSummaries: Array<{ branchSync: string; profit: number }>;
+  profitMonthLabel: string;
 }
 
 let carouselCacheReady: Promise<void> | null = null;

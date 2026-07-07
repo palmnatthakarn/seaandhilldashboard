@@ -234,6 +234,8 @@ function formatDailySummaryMessage(input: {
   avgOrderValue: number;
   branchSummaries: BranchDailySummary[];
   alerts: Alert[];
+  profitSummaries: BranchProfitLossSummary[];
+  profitMonthLabel: string;
 }) {
   const dashboardUrl = getDashboardUrl();
   const errors = input.alerts.filter((item) => (item.severity || item.type) === 'error').length;
@@ -268,6 +270,14 @@ function formatDailySummaryMessage(input: {
       ? `กิจการที่เลือก: ${escapeHtml(input.branches.join(', '))}`
       : 'กิจการที่เลือก: ทุกกิจการ';
 
+  const profitRows = input.profitSummaries.length > 0
+    ? [...input.profitSummaries]
+      .sort((a, b) => b.profit - a.profit)
+      .map((p, index) => `${index + 1}) ${resolveBranchName(p.branchSync)} | ${p.profit < 0 ? '-' : '+'}฿${formatCurrency(Math.abs(p.profit))}${p.profit < 0 ? ' (ขาดทุน)' : ''}`)
+      .map((line) => escapeHtml(line))
+      .join('\n')
+    : '- ไม่พบข้อมูลในช่วงเวลานี้';
+
   const summaryLines = [
     `📊 <b>Daily MIS Summary (${escapeHtml(formatThaiDateOnly(`${input.date}T00:00:00.000Z`))})</b>`,
     `🏢 ${scope}`,
@@ -283,6 +293,9 @@ function formatDailySummaryMessage(input: {
       '',
       '🏬 <b>ยอดแยกตามกิจการ</b>',
       branchRows,
+      '',
+      `📊 <b>กำไร/ขาดทุนรายกิจการ (${escapeHtml(input.profitMonthLabel)})</b>`,
+      profitRows,
     );
   }
 
@@ -302,7 +315,7 @@ function formatDailySummaryMessage(input: {
 }
 
 function buildBarRows(
-  items: Array<{ branchSync: string; branchName: string; value: number }>,
+  items: Array<{ branchSync: string; branchName: string; value: number; detail?: string }>,
   { signedColor = false }: { signedColor?: boolean } = {},
 ) {
   const maxAbs = Math.max(1, ...items.map((item) => Math.abs(item.value)));
@@ -333,6 +346,7 @@ function buildBarRows(
           ],
         },
         { type: 'text', text: label, size: 'xs', weight: 'bold', align: 'end', color: isNegative ? '#FF3B30' : '#000000' },
+        ...(item.detail ? [{ type: 'text', text: item.detail, size: 'xxs', color: '#999999', align: 'end', wrap: true }] : []),
       ],
     };
   });
@@ -341,7 +355,7 @@ function buildBarRows(
 function buildBarChartBubble(
   title: string,
   subtitle: string,
-  items: Array<{ branchSync: string; branchName: string; value: number }>,
+  items: Array<{ branchSync: string; branchName: string; value: number; detail?: string }>,
   opts?: { signedColor?: boolean },
 ) {
   return {
@@ -365,16 +379,31 @@ function buildBarChartBubble(
   };
 }
 
+function formatThaiMonthLabel(isoDate: string, timezone = getNotifyTimezone()) {
+  return new Intl.DateTimeFormat('th-TH', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: 'long',
+  }).format(new Date(`${isoDate}T00:00:00.000Z`));
+}
+
 function buildSalesProfitCarousel(
-  date: string,
+  salesDate: string,
+  profitPeriod: { start: string; end: string },
   branchSummaries: BranchDailySummary[],
   profitSummaries: BranchProfitLossSummary[],
 ): LineMessagePayload {
-  const dateLabel = formatThaiDateOnly(`${date}T00:00:00.000Z`);
+  const salesDateLabel = formatThaiDateOnly(`${salesDate}T00:00:00.000Z`);
+  const profitMonthLabel = formatThaiMonthLabel(profitPeriod.start);
 
   const salesItems = [...branchSummaries]
     .sort((a, b) => b.totalSales - a.totalSales)
-    .map((b) => ({ branchSync: b.branchSync, branchName: b.branchName, value: b.totalSales }));
+    .map((b) => ({
+      branchSync: b.branchSync,
+      branchName: b.branchName,
+      value: b.totalSales,
+      detail: `🧾 ${formatNumber(b.totalOrders)} บิล | 👥 ${formatNumber(b.totalCustomers)} ลูกค้า | 🛒 ฿${formatCurrency(b.avgOrderValue)}/บิล`,
+    }));
 
   const profitItems = [...profitSummaries]
     .sort((a, b) => b.profit - a.profit)
@@ -382,12 +411,12 @@ function buildSalesProfitCarousel(
 
   return {
     type: 'flex',
-    altText: `Daily MIS Summary (${dateLabel})`,
+    altText: `Daily MIS Summary (${salesDateLabel})`,
     contents: {
       type: 'carousel',
       contents: [
-        buildBarChartBubble('💰 ยอดขายรายกิจการ', dateLabel, salesItems),
-        buildBarChartBubble('📊 กำไร/ขาดทุนรายกิจการ', dateLabel, profitItems, { signedColor: true }),
+        buildBarChartBubble('💰 ยอดขายรายกิจการ', salesDateLabel, salesItems),
+        buildBarChartBubble('📊 กำไร/ขาดทุนรายกิจการ', `เดือน${profitMonthLabel}`, profitItems, { signedColor: true }),
       ],
     },
   };
@@ -398,6 +427,8 @@ function formatBranchCard(
   date: string,
   branchSync: string,
   alerts: Alert[],
+  profit: number | undefined,
+  profitMonthLabel: string,
 ) {
   const dashboardUrl = getDashboardUrl();
   const branchAlerts = alerts.filter(
@@ -427,6 +458,8 @@ function formatBranchCard(
     `🧾 ออเดอร์: ${formatNumber(summary.totalOrders)} บิล`,
     `👥 ลูกค้า: ${formatNumber(summary.totalCustomers)} คน`,
     `🛒 Avg/Order: ฿${formatCurrency(summary.avgOrderValue)}`,
+    '',
+    `📊 กำไร/ขาดทุน (${escapeHtml(profitMonthLabel)}): ${profit === undefined ? 'ไม่พบข้อมูล' : `${profit < 0 ? '-' : '+'}฿${formatCurrency(Math.abs(profit))}${profit < 0 ? ' (ขาดทุน)' : ''}`}`,
     '',
     '⚠️ <b>Alerts</b>',
     `- Error: ${errors}`,
@@ -588,11 +621,14 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
       continue;
     }
 
-    const [kpis, alerts, branchSummaries] = await Promise.all([
+    const monthToDate = { start: `${date.slice(0, 7)}-01`, end: date };
+    const [kpis, alerts, branchSummaries, profitSummaries] = await Promise.all([
       getDashboardKPIs(branches, { start: date, end: date }),
       getDashboardAlerts(branches),
       getBranchDailySummaries(branches, { start: date, end: date }),
+      getBranchProfitLossSummaries(monthToDate, branches),
     ]);
+    const profitMonthLabel = `เดือน${formatThaiMonthLabel(monthToDate.start)}`;
 
     const overviewCard = formatDailySummaryMessage({
       date,
@@ -603,6 +639,8 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
       avgOrderValue: kpis.avgOrderValue,
       branchSummaries,
       alerts,
+      profitSummaries,
+      profitMonthLabel,
     });
 
     const activeSync = branchSummaries.length > 0 ? branchSummaries[0].branchSync : 'ov';
@@ -613,6 +651,8 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
           date,
           activeSync,
           alerts,
+          profitSummaries.find((p) => p.branchSync === activeSync)?.profit,
+          profitMonthLabel,
         );
 
     const messageId = await sendTelegramMessage(
@@ -650,6 +690,8 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
           amount: a.amount,
           category: a.category,
         })),
+        profitSummaries: profitSummaries.map((p) => ({ branchSync: p.branchSync, profit: p.profit })),
+        profitMonthLabel,
       });
     }
 
@@ -671,12 +713,13 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
       skipped += 1;
     } else {
       try {
+        const monthToDate = { start: `${date.slice(0, 7)}-01`, end: date };
         const [branchSummaries, profitSummaries] = await Promise.all([
           getBranchDailySummaries(branches, { start: date, end: date }),
-          getBranchProfitLossSummaries({ start: date, end: date }, branches),
+          getBranchProfitLossSummaries(monthToDate, branches),
         ]);
 
-        const carousel = buildSalesProfitCarousel(date, branchSummaries, profitSummaries);
+        const carousel = buildSalesProfitCarousel(date, monthToDate, branchSummaries, profitSummaries);
 
         await sendLineMessage(target.userId, [carousel]);
         sent += 1;
