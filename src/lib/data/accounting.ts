@@ -31,6 +31,7 @@ import {
   getAccountPurchaseItemsQuery,
   getAccountTypeQuery,
   getChartOfAccountsListQuery,
+  getBranchProfitLossQuery,
 } from './accounting-queries';
 
 // Re-export query functions for convenience (server-side usage only)
@@ -111,6 +112,28 @@ export async function getAccountingKPIs(dateRange: DateRange, branchSync?: strin
     console.error('Error fetching accounting KPIs:', error);
     throw error;
   }
+}
+
+export interface BranchProfitLossSummary {
+  branchSync: string;
+  revenue: number;
+  expenses: number;
+  profit: number;
+}
+
+/**
+ * Get revenue/expenses/profit grouped by branch (used for LINE branch-comparison cards)
+ */
+export async function getBranchProfitLossSummaries(dateRange: DateRange, branchSync?: string[]): Promise<BranchProfitLossSummary[]> {
+  const query = getBranchProfitLossQuery(dateRange, branchSync);
+  const result = await clickhouse.query({ query, format: 'JSONEachRow' });
+  const rows = await result.json() as Array<{ branchSync: string; revenue: number | string; expenses: number | string }>;
+
+  return rows.map((row) => {
+    const revenue = Number(row.revenue) || 0;
+    const expenses = Number(row.expenses) || 0;
+    return { branchSync: row.branchSync, revenue, expenses, profit: revenue - expenses };
+  });
 }
 
 /**

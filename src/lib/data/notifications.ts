@@ -10,12 +10,13 @@ import {
   type TelegramNotificationTarget,
 } from '@/lib/data/telegram-config';
 import { sendTelegramMessage as sendTelegramText, type TelegramInlineKeyboardMarkup } from '@/lib/telegram';
-import { sendLineMessage } from '@/lib/line';
+import { sendLineMessage, type LineMessagePayload } from '@/lib/line';
 import {
   ensureLineUserConfig,
   listLineNotificationTargets,
   type LineNotificationTarget,
 } from '@/lib/data/line-config';
+import { getBranchProfitLossSummaries, type BranchProfitLossSummary } from '@/lib/data/accounting';
 
 type NotifyType = 'incident' | 'daily';
 
@@ -300,74 +301,96 @@ function formatDailySummaryMessage(input: {
   return summaryLines.join('\n');
 }
 
-function formatDailySummaryMessageForLine(input: {
-  date: string;
-  branches?: string[];
-  totalSales: number;
-  totalOrders: number;
-  totalCustomers: number;
-  avgOrderValue: number;
-  branchSummaries: BranchDailySummary[];
-  alerts: Alert[];
-}) {
-  const dashboardUrl = getDashboardUrl();
-  const errors = input.alerts.filter((item) => (item.severity || item.type) === 'error').length;
-  const warnings = input.alerts.filter((item) => (item.severity || item.type) === 'warning').length;
+function buildBarRows(
+  items: Array<{ branchSync: string; branchName: string; value: number }>,
+  { signedColor = false }: { signedColor?: boolean } = {},
+) {
+  const maxAbs = Math.max(1, ...items.map((item) => Math.abs(item.value)));
 
-  const topItems = [...input.alerts]
-    .sort((a, b) => {
-      const severityDelta = severityWeight(a) - severityWeight(b);
-      if (severityDelta !== 0) return severityDelta;
-      return (b.count || 0) - (a.count || 0);
-    })
-    .slice(0, 3)
-    .map((alert, index) => `${index + 1}) ${alert.title} - ${alert.message}`);
+  return items.map((item, index) => {
+    const pct = Math.max(3, Math.round((Math.abs(item.value) / maxAbs) * 100));
+    const isNegative = signedColor && item.value < 0;
+    const barColor = isNegative ? '#FF3B30' : '#00B900';
+    const label = signedColor
+      ? `${isNegative ? '-' : '+'}฿${formatCurrency(Math.abs(item.value))}${isNegative ? ' (ขาดทุน)' : ''}`
+      : `฿${formatCurrency(item.value)}`;
 
-  const topSection = topItems.length > 0 ? topItems.join('\n') : '- ไม่มีเหตุผิดปกติสำคัญ';
+    return {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'xs',
+      margin: index === 0 ? 'none' : 'lg',
+      contents: [
+        { type: 'text', text: item.branchName, size: 'xs', color: '#555555', wrap: true },
+        {
+          type: 'box',
+          layout: 'horizontal',
+          height: '10px',
+          backgroundColor: '#EEEEEE',
+          cornerRadius: '4px',
+          contents: [
+            { type: 'box', layout: 'vertical', width: `${pct}%`, backgroundColor: barColor, cornerRadius: '4px', contents: [] },
+          ],
+        },
+        { type: 'text', text: label, size: 'xs', weight: 'bold', align: 'end', color: isNegative ? '#FF3B30' : '#000000' },
+      ],
+    };
+  });
+}
 
-  const branchRows = input.branchSummaries.length > 0
-    ? input.branchSummaries
-      .slice(0, 10)
-      .map((branch, index) => `${index + 1}) ${branch.branchName} | ฿${formatCurrency(branch.totalSales)} | ${formatNumber(branch.totalOrders)} บิล | ${formatNumber(branch.totalCustomers)} ลูกค้า`)
-      .join('\n')
-    : '- ไม่พบข้อมูลกิจการในช่วงเวลานี้';
+function buildBarChartBubble(
+  title: string,
+  subtitle: string,
+  items: Array<{ branchSync: string; branchName: string; value: number }>,
+  opts?: { signedColor?: boolean },
+) {
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box',
+      layout: 'vertical',
+      contents: [
+        { type: 'text', text: title, weight: 'bold', size: 'md', wrap: true },
+        { type: 'text', text: subtitle, size: 'xs', color: '#888888', wrap: true },
+      ],
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: items.length > 0
+        ? buildBarRows(items, opts)
+        : [{ type: 'text', text: 'ไม่พบข้อมูลในช่วงเวลานี้', size: 'sm', color: '#888888' }],
+    },
+  };
+}
 
-  const isSingleBranch = input.branches && input.branches.length === 1;
+function buildSalesProfitCarousel(
+  date: string,
+  branchSummaries: BranchDailySummary[],
+  profitSummaries: BranchProfitLossSummary[],
+): LineMessagePayload {
+  const dateLabel = formatThaiDateOnly(`${date}T00:00:00.000Z`);
 
-  const scope = isSingleBranch
-    ? `กิจการที่เลือก: ${resolveBranchName(input.branches![0])}`
-    : input.branches && input.branches.length > 0
-      ? `กิจการที่เลือก: ${input.branches.join(', ')}`
-      : 'กิจการที่เลือก: ทุกกิจการ';
+  const salesItems = [...branchSummaries]
+    .sort((a, b) => b.totalSales - a.totalSales)
+    .map((b) => ({ branchSync: b.branchSync, branchName: b.branchName, value: b.totalSales }));
 
-  const lines = [
-    `📊 Daily MIS Summary (${formatThaiDateOnly(`${input.date}T00:00:00.000Z`)})`,
-    `🏢 ${scope}`,
-    '',
-    `💰 Sales: ฿${formatCurrency(input.totalSales)}`,
-    `🧾 Orders: ${formatNumber(input.totalOrders)}`,
-    `👥 Customers: ${formatNumber(input.totalCustomers)}`,
-    `🛒 Avg/Order: ฿${formatCurrency(input.avgOrderValue)}`,
-  ];
+  const profitItems = [...profitSummaries]
+    .sort((a, b) => b.profit - a.profit)
+    .map((p) => ({ branchSync: p.branchSync, branchName: resolveBranchName(p.branchSync), value: p.profit }));
 
-  if (!isSingleBranch) {
-    lines.push('', '🏬 ยอดแยกตามกิจการ', branchRows);
-  }
-
-  lines.push(
-    '',
-    '⚠️ Alerts ตอนนี้',
-    `- Error: ${errors}`,
-    `- Warning: ${warnings}`,
-    '',
-    '🔥 เรื่องที่ควรตาม (Top 3)',
-    topSection,
-    '',
-    `🔗 เปิด Dashboard: ${dashboardUrl}`,
-    '#MIS #DailyReport',
-  );
-
-  return lines.join('\n');
+  return {
+    type: 'flex',
+    altText: `Daily MIS Summary (${dateLabel})`,
+    contents: {
+      type: 'carousel',
+      contents: [
+        buildBarChartBubble('💰 ยอดขายรายกิจการ', dateLabel, salesItems),
+        buildBarChartBubble('📊 กำไร/ขาดทุนรายกิจการ', dateLabel, profitItems, { signedColor: true }),
+      ],
+    },
+  };
 }
 
 function formatBranchCard(
@@ -648,24 +671,14 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
       skipped += 1;
     } else {
       try {
-        const [kpis, alerts, branchSummaries] = await Promise.all([
-          getDashboardKPIs(branches, { start: date, end: date }),
-          getDashboardAlerts(branches),
+        const [branchSummaries, profitSummaries] = await Promise.all([
           getBranchDailySummaries(branches, { start: date, end: date }),
+          getBranchProfitLossSummaries({ start: date, end: date }, branches),
         ]);
 
-        const message = formatDailySummaryMessageForLine({
-          date,
-          branches,
-          totalSales: kpis.totalSales,
-          totalOrders: kpis.totalOrders,
-          totalCustomers: kpis.totalCustomers,
-          avgOrderValue: kpis.avgOrderValue,
-          branchSummaries,
-          alerts,
-        });
+        const carousel = buildSalesProfitCarousel(date, branchSummaries, profitSummaries);
 
-        await sendLineMessage(target.userId, message);
+        await sendLineMessage(target.userId, [carousel]);
         sent += 1;
       } catch (error) {
         console.error('[notifications] failed to send LINE daily summary:', error);

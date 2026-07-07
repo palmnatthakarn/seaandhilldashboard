@@ -11,7 +11,7 @@ function requireLineChannelAccessToken() {
   return token;
 }
 
-export async function sendLineMessage(to: string, text: string) {
+export async function sendLineMessage(to: string, messages: LineMessagePayload[]) {
   const token = requireLineChannelAccessToken();
 
   const response = await fetch('https://api.line.me/v2/bot/message/push', {
@@ -20,10 +20,7 @@ export async function sendLineMessage(to: string, text: string) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      to,
-      messages: [{ type: 'text', text }],
-    }),
+    body: JSON.stringify({ to, messages }),
     cache: 'no-store',
   });
 

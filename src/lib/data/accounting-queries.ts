@@ -162,6 +162,22 @@ export function getProfitLossQuery(dateRange: DateRange, branchSync?: string[]):
   `;
 }
 
+export function getBranchProfitLossQuery(dateRange: DateRange, branchSync?: string[]): string {
+  const branchFilter = buildBranchFilterSql(branchSync);
+  return `
+    SELECT
+      branch_sync AS branchSync,
+      sum(if(${accountTypeFilter(['INCOME'])}, credit - debit, 0)) as revenue,
+      sum(if(${accountTypeFilter(['EXPENSES'])}, debit - credit, 0)) as expenses
+    FROM journal_transaction_detail
+    WHERE ${reportDateExpr()} BETWEEN '${dateRange.start}' AND '${dateRange.end}'
+      ${branchFilter}
+    GROUP BY branch_sync
+    ORDER BY branch_sync
+    SETTINGS final = 1
+  `;
+}
+
 export function getBalanceSheetQuery(dateRange: DateRange, branchSync?: string[]): string {
   const branchFilter = buildBranchFilterSql(branchSync);
   const bsFilter = accountTypeFilter(['ASSETS', 'LIABILITIES', 'EQUITY']);
