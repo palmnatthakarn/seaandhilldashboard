@@ -10,6 +10,7 @@ import {
   type TelegramNotificationTarget,
 } from '@/lib/data/telegram-config';
 import { sendTelegramMessage as sendTelegramText, type TelegramInlineKeyboardMarkup } from '@/lib/telegram';
+import { sendLineMessage } from '@/lib/line';
 
 type NotifyType = 'incident' | 'daily';
 
@@ -294,6 +295,76 @@ function formatDailySummaryMessage(input: {
   return summaryLines.join('\n');
 }
 
+function formatDailySummaryMessageForLine(input: {
+  date: string;
+  branches?: string[];
+  totalSales: number;
+  totalOrders: number;
+  totalCustomers: number;
+  avgOrderValue: number;
+  branchSummaries: BranchDailySummary[];
+  alerts: Alert[];
+}) {
+  const dashboardUrl = getDashboardUrl();
+  const errors = input.alerts.filter((item) => (item.severity || item.type) === 'error').length;
+  const warnings = input.alerts.filter((item) => (item.severity || item.type) === 'warning').length;
+
+  const topItems = [...input.alerts]
+    .sort((a, b) => {
+      const severityDelta = severityWeight(a) - severityWeight(b);
+      if (severityDelta !== 0) return severityDelta;
+      return (b.count || 0) - (a.count || 0);
+    })
+    .slice(0, 3)
+    .map((alert, index) => `${index + 1}) ${alert.title} - ${alert.message}`);
+
+  const topSection = topItems.length > 0 ? topItems.join('\n') : '- ไม่มีเหตุผิดปกติสำคัญ';
+
+  const branchRows = input.branchSummaries.length > 0
+    ? input.branchSummaries
+      .slice(0, 10)
+      .map((branch, index) => `${index + 1}) ${branch.branchName} | ฿${formatCurrency(branch.totalSales)} | ${formatNumber(branch.totalOrders)} บิล | ${formatNumber(branch.totalCustomers)} ลูกค้า`)
+      .join('\n')
+    : '- ไม่พบข้อมูลกิจการในช่วงเวลานี้';
+
+  const isSingleBranch = input.branches && input.branches.length === 1;
+
+  const scope = isSingleBranch
+    ? `กิจการที่เลือก: ${resolveBranchName(input.branches![0])}`
+    : input.branches && input.branches.length > 0
+      ? `กิจการที่เลือก: ${input.branches.join(', ')}`
+      : 'กิจการที่เลือก: ทุกกิจการ';
+
+  const lines = [
+    `📊 Daily MIS Summary (${formatThaiDateOnly(`${input.date}T00:00:00.000Z`)})`,
+    `🏢 ${scope}`,
+    '',
+    `💰 Sales: ฿${formatCurrency(input.totalSales)}`,
+    `🧾 Orders: ${formatNumber(input.totalOrders)}`,
+    `👥 Customers: ${formatNumber(input.totalCustomers)}`,
+    `🛒 Avg/Order: ฿${formatCurrency(input.avgOrderValue)}`,
+  ];
+
+  if (!isSingleBranch) {
+    lines.push('', '🏬 ยอดแยกตามกิจการ', branchRows);
+  }
+
+  lines.push(
+    '',
+    '⚠️ Alerts ตอนนี้',
+    `- Error: ${errors}`,
+    `- Warning: ${warnings}`,
+    '',
+    '🔥 เรื่องที่ควรตาม (Top 3)',
+    topSection,
+    '',
+    `🔗 เปิด Dashboard: ${dashboardUrl}`,
+    '#MIS #DailyReport',
+  );
+
+  return lines.join('\n');
+}
+
 function formatBranchCard(
   summary: BranchDailySummary,
   date: string,
@@ -368,6 +439,13 @@ function buildCarouselKeyboard(
   rows.push([{ text: activeSync === 'ov' ? '📌 ภาพรวม' : '📊 ภาพรวม', callback_data: 'd:ov' }]);
 
   return { inline_keyboard: rows };
+}
+
+function getLineNotifyTarget() {
+  const userId = process.env.NOTIFY_LINE_USER_ID?.trim();
+  if (!userId || !process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim()) return null;
+
+  return { userId };
 }
 
 function getLegacyTargetFromEnv(): TelegramNotificationTarget | null {
@@ -529,6 +607,42 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     }
 
     sent += 1;
+  }
+
+  const lineTarget = getLineNotifyTarget();
+  if (lineTarget) {
+    const date = getYesterdayDateInTimezone(getNotifyTimezone());
+    const dedupeKey = `daily:line:${lineTarget.userId}:${date}`;
+    const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
+    checked += 1;
+
+    if (!shouldSend) {
+      skipped += 1;
+    } else {
+      try {
+        const [kpis, alerts, branchSummaries] = await Promise.all([
+          getDashboardKPIs(undefined, { start: date, end: date }),
+          getDashboardAlerts(undefined),
+          getBranchDailySummaries(undefined, { start: date, end: date }),
+        ]);
+
+        const message = formatDailySummaryMessageForLine({
+          date,
+          totalSales: kpis.totalSales,
+          totalOrders: kpis.totalOrders,
+          totalCustomers: kpis.totalCustomers,
+          avgOrderValue: kpis.avgOrderValue,
+          branchSummaries,
+          alerts,
+        });
+
+        await sendLineMessage(lineTarget.userId, message);
+        sent += 1;
+      } catch (error) {
+        console.error('[notifications] failed to send LINE daily summary:', error);
+        skipped += 1;
+      }
+    }
   }
 
   return {
