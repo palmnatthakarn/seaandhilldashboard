@@ -11,6 +11,11 @@ import {
 } from '@/lib/data/telegram-config';
 import { sendTelegramMessage as sendTelegramText, type TelegramInlineKeyboardMarkup } from '@/lib/telegram';
 import { sendLineMessage } from '@/lib/line';
+import {
+  ensureLineUserConfig,
+  listLineNotificationTargets,
+  type LineNotificationTarget,
+} from '@/lib/data/line-config';
 
 type NotifyType = 'incident' | 'daily';
 
@@ -441,11 +446,30 @@ function buildCarouselKeyboard(
   return { inline_keyboard: rows };
 }
 
-function getLineNotifyTarget() {
+function getLegacyLineTargetFromEnv(): LineNotificationTarget | null {
   const userId = process.env.NOTIFY_LINE_USER_ID?.trim();
   if (!userId || !process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim()) return null;
 
-  return { userId };
+  return {
+    userId,
+    enabled: true,
+    timezone: getNotifyTimezone(),
+    branches: getConfiguredBranches(),
+  };
+}
+
+async function getLineNotificationTargets(): Promise<LineNotificationTarget[]> {
+  const legacyTarget = getLegacyLineTargetFromEnv();
+  if (legacyTarget) {
+    await ensureLineUserConfig(legacyTarget.userId, 'system');
+  }
+
+  const dbTargets = await listLineNotificationTargets();
+  if (dbTargets.length > 0) {
+    return dbTargets;
+  }
+
+  return legacyTarget ? [legacyTarget] : [];
 }
 
 function getLegacyTargetFromEnv(): TelegramNotificationTarget | null {
@@ -609,10 +633,14 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     sent += 1;
   }
 
-  const lineTarget = getLineNotifyTarget();
-  if (lineTarget) {
-    const date = getYesterdayDateInTimezone(getNotifyTimezone());
-    const dedupeKey = `daily:line:${lineTarget.userId}:${date}`;
+  const lineTargets = await getLineNotificationTargets();
+  for (const target of lineTargets) {
+    if (!target.enabled) continue;
+    const timezone = target.timezone || getNotifyTimezone();
+    const date = getYesterdayDateInTimezone(timezone);
+    const branches = target.branches;
+    const branchSignature = branches && branches.length > 0 ? branches.join('|') : 'ALL';
+    const dedupeKey = `daily:line:${target.userId}:${date}:${branchSignature}`;
     const shouldSend = await shouldSendByDedupe(dedupeKey, 24 * 60);
     checked += 1;
 
@@ -621,13 +649,14 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
     } else {
       try {
         const [kpis, alerts, branchSummaries] = await Promise.all([
-          getDashboardKPIs(undefined, { start: date, end: date }),
-          getDashboardAlerts(undefined),
-          getBranchDailySummaries(undefined, { start: date, end: date }),
+          getDashboardKPIs(branches, { start: date, end: date }),
+          getDashboardAlerts(branches),
+          getBranchDailySummaries(branches, { start: date, end: date }),
         ]);
 
         const message = formatDailySummaryMessageForLine({
           date,
+          branches,
           totalSales: kpis.totalSales,
           totalOrders: kpis.totalOrders,
           totalCustomers: kpis.totalCustomers,
@@ -636,7 +665,7 @@ export async function dispatchDailySummary(): Promise<NotificationDispatchResult
           alerts,
         });
 
-        await sendLineMessage(lineTarget.userId, message);
+        await sendLineMessage(target.userId, message);
         sent += 1;
       } catch (error) {
         console.error('[notifications] failed to send LINE daily summary:', error);
