@@ -40,9 +40,16 @@ dev-server*.log
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-.env*.local
 
 # local auth database
 auth.db
 
+# local runtime files
+auth
+auth-wal
+
+# local lint reports
+comparison-lint.txt
+
+# local environment
 .env*.local
