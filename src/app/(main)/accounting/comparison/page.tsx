@@ -5,14 +5,14 @@ import { useDateRangeStore } from '@/store/useDateRangeStore';
 import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
-import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { ComparisonDateFilter } from '@/components/shared/comparison/ComparisonDateFilter';
+import { KPIGrid } from '@/components/shared/comparison/SimpleKPICard';
 import {
   Wallet, CreditCard, PiggyBank, TrendingUp, TrendingDown,
   BarChart3, Trophy, Award, Medal, Building2,
-  DollarSign, Scale, Receipt, Clock, Users, FileText, Layers,
+  Scale, Receipt, Layers,
 } from 'lucide-react';
-import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
+import { BRANCH_PALETTE, fmt, fmtShort, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
 import type {
   AccountingKPIs, ProfitLossData,
@@ -138,25 +138,6 @@ export default function AccountingComparisonPage() {
       const pB = (b.kpis?.revenue?.value || 0) - (b.kpis?.expenses?.value || 0);
       return pB - pA;
     }), [data]);
-
-  /* ─── Aging bucket helpers ─── */
-  const AGING_BUCKETS = ['ยังไม่ครบกำหนด', '1-30 วัน', '31-60 วัน', '61-90 วัน', '91-120 วัน', 'มากกว่า 120 วัน'];
-  const groupAgingByBucket = (items: AgingItem[]) => {
-    const map: Record<string, number> = {};
-    AGING_BUCKETS.forEach(b => { map[b] = 0; });
-    items.forEach(item => {
-      const bucket = item.agingBucket || (
-        item.daysOverdue <= 0 ? 'ยังไม่ครบกำหนด'
-          : item.daysOverdue <= 30 ? '1-30 วัน'
-            : item.daysOverdue <= 60 ? '31-60 วัน'
-              : item.daysOverdue <= 90 ? '61-90 วัน'
-                : item.daysOverdue <= 120 ? '91-120 วัน'
-                  : 'มากกว่า 120 วัน'
-      );
-      map[bucket] = (map[bucket] || 0) + item.outstanding;
-    });
-    return map;
-  };
 
   /* ─── Account group name mapping (Thai chart of accounts) ─── */
   const ACCOUNT_GROUP_NAMES: Record<string, string> = {
@@ -713,7 +694,6 @@ export default function AccountingComparisonPage() {
             <div className="px-6 pb-5">
               <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
                 {data.map((d, idx) => {
-                  const palette = BRANCH_PALETTE[idx % BRANCH_PALETTE.length];
                   const totalExp = d.expenseBreakdown.reduce((s, e) => s + e.amount, 0);
                   const DONUT_COLORS = ['#ef4444', '#f97316', '#eab308', '#8b5cf6', '#3b82f6', '#06b6d4', '#ec4899', '#84cc16'];
                   if (d.expenseBreakdown.length === 0) {

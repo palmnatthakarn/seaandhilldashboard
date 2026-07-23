@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Listbox } from '@headlessui/react';
 import { motion } from 'framer-motion';
 import { Calendar, ChevronDown } from 'lucide-react';
@@ -26,7 +26,7 @@ function parseDateFromDDMMYYYY(dateStr: string): string {
 
 function isValidDDMMYYYY(dateStr: string): boolean {
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) return false;
-  const [day, month, year] = dateStr.split('/');
+  const [day, month] = dateStr.split('/');
   const d = Number(day);
   const m = Number(month);
   if (m < 1 || m > 12) return false;
@@ -81,52 +81,49 @@ export function ComparisonDateFilter({
   const value = valueProp ?? storeRange;
   const onChange = onChangeProp ?? setStoreRange;
 
-  const [selectedKey, setSelectedKey] = useState<DateRangeKey>(defaultKey);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customStartDisplay, setCustomStartDisplay] = useState('');
-  const [customEndDisplay, setCustomEndDisplay] = useState('');
+  const [isCustomPanelOpen, setIsCustomPanelOpen] = useState(false);
+  const [customStartDraft, setCustomStartDraft] = useState<{
+    text: string;
+    range: DateRange;
+  } | null>(null);
+  const [customEndDraft, setCustomEndDraft] = useState<{
+    text: string;
+    range: DateRange;
+  } | null>(null);
   const startDateInputRef = useRef<HTMLInputElement>(null);
   const endDateInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync selectedKey when store value changes from another page
-  useEffect(() => {
-    let matched: DateRangeKey | null = null;
+  const selectedKey = useMemo(() => {
+    if (!value.start || !value.end) return defaultKey;
+
     for (const [key, preset] of Object.entries(DATE_RANGES)) {
       if (key === 'CUSTOM') continue;
       const range = preset.getValue();
       if (range.start === value.start && range.end === value.end) {
-        matched = key as DateRangeKey;
-        break;
+        return key as DateRangeKey;
       }
     }
-    if (matched) {
-      setSelectedKey(matched);
-      setShowCustom(false);
-    } else {
-      setSelectedKey('CUSTOM');
-      setShowCustom(true);
-      
-      const currentStartParsed = parseDateFromDDMMYYYY(customStartDisplay);
-      const currentEndParsed = parseDateFromDDMMYYYY(customEndDisplay);
 
-      if (currentStartParsed !== value.start) {
-        setCustomStartDisplay(formatDateToDDMMYYYY(value.start));
-      }
-      if (currentEndParsed !== value.end) {
-        setCustomEndDisplay(formatDateToDDMMYYYY(value.end));
-      }
-    }
-  }, [value]);
+    return 'CUSTOM';
+  }, [defaultKey, value.end, value.start]);
+
+  const showCustom = selectedKey === 'CUSTOM' || isCustomPanelOpen;
+  const customStartDisplay =
+    customStartDraft?.range.start === value.start && customStartDraft.range.end === value.end
+      ? customStartDraft.text
+      : formatDateToDDMMYYYY(value.start);
+  const customEndDisplay =
+    customEndDraft?.range.start === value.start && customEndDraft.range.end === value.end
+      ? customEndDraft.text
+      : formatDateToDDMMYYYY(value.end);
 
   const handlePresetChange = (key: DateRangeKey) => {
-    setSelectedKey(key);
-
     if (key === 'CUSTOM') {
-      setShowCustom(true);
-      setCustomStartDisplay(formatDateToDDMMYYYY(value.start));
-      setCustomEndDisplay(formatDateToDDMMYYYY(value.end));
+      setIsCustomPanelOpen(true);
+      setCustomStartDraft(null);
+      setCustomEndDraft(null);
     } else {
-      setShowCustom(false);
+      setIsCustomPanelOpen(false);
       const range = DATE_RANGES[key].getValue();
       onChange(range);
     }
@@ -134,7 +131,7 @@ export function ComparisonDateFilter({
 
   const handleCustomStartTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const displayValue = e.target.value;
-    setCustomStartDisplay(displayValue);
+    setCustomStartDraft({ text: displayValue, range: value });
 
     if (isValidDDMMYYYY(displayValue)) {
       const parsed = parseDateFromDDMMYYYY(displayValue);
@@ -147,7 +144,7 @@ export function ComparisonDateFilter({
 
   const handleCustomEndTextChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const displayValue = e.target.value;
-    setCustomEndDisplay(displayValue);
+    setCustomEndDraft({ text: displayValue, range: value });
 
     if (isValidDDMMYYYY(displayValue)) {
       const parsed = parseDateFromDDMMYYYY(displayValue);
@@ -161,7 +158,7 @@ export function ComparisonDateFilter({
   const handleStartDatePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const dateValue = e.target.value;
     if (dateValue) {
-      setCustomStartDisplay(formatDateToDDMMYYYY(dateValue));
+      setCustomStartDraft({ text: formatDateToDDMMYYYY(dateValue), range: value });
       onChange({
         start: dateValue,
         end: value.end,
@@ -172,7 +169,7 @@ export function ComparisonDateFilter({
   const handleEndDatePickerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const dateValue = e.target.value;
     if (dateValue) {
-      setCustomEndDisplay(formatDateToDDMMYYYY(dateValue));
+      setCustomEndDraft({ text: formatDateToDDMMYYYY(dateValue), range: value });
       onChange({
         start: value.start,
         end: dateValue,
@@ -187,9 +184,9 @@ export function ComparisonDateFilter({
       
       if (inferredValue !== displayValue) {
         if (type === 'start') {
-          setCustomStartDisplay(inferredValue);
+          setCustomStartDraft({ text: inferredValue, range: value });
         } else {
-          setCustomEndDisplay(inferredValue);
+          setCustomEndDraft({ text: inferredValue, range: value });
         }
 
         if (isValidDDMMYYYY(inferredValue)) {

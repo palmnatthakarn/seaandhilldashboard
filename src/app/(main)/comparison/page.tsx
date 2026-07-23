@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useComparison } from '@/lib/ComparisonContext';
 import { useComparisonData } from '@/hooks/useComparisonData';
-import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
+import { ComparisonDateFilter } from '@/components/shared/comparison/ComparisonDateFilter';
 import { cn } from '@/lib/utils';
 import type { BranchComparisonData } from '@/lib/data/comparison';
 import { ComparisonTable } from './ComparisonTable';

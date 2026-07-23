@@ -242,11 +242,16 @@ async function executeTool(name: string, args: Record<string, unknown>, branchSc
           format: 'JSONEachRow',
         });
         const data = await result.json();
+        const rowCount = (data as unknown[]).length;
+        const ROW_LIMIT = 30;
+        const truncated = rowCount > ROW_LIMIT;
         return {
           query: rawSql,
-          rowCount: (data as unknown[]).length,
-          data: (data as unknown[]).slice(0, 100),
-          message: `Query returned ${(data as unknown[]).length} rows`,
+          rowCount,
+          data: (data as unknown[]).slice(0, ROW_LIMIT),
+          message: truncated
+            ? `Query returned ${rowCount} rows, showing first ${ROW_LIMIT}. Add LIMIT ${ROW_LIMIT} to the SQL to avoid this next time.`
+            : `Query returned ${rowCount} rows`,
         };
       } catch (queryError: unknown) {
         const errorMsg =
@@ -299,7 +304,7 @@ export async function POST(req: Request) {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        const MAX_ITERATIONS = 20;
+        const MAX_ITERATIONS = 8;
         let iterations = 0;
 
         // Token usage tracking

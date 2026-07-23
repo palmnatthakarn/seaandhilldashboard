@@ -104,6 +104,9 @@ function buildProductSalesKpiFilter(alias = 'sid'): string {
         AND ${alias}.qty > 0
         AND ${alias}.sum_amount > 0
         AND trim(${alias}.unit_code) != ''
+        AND ${alias}.doc_no NOT LIKE 'CRD%'
+        AND ${alias}.doc_no NOT LIKE 'AOB%'
+        AND ${alias}.doc_no NOT LIKE 'PRM%'
   `;
 }
 
@@ -146,6 +149,7 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
         count() as currentOrders,
         uniq(customer_code) as currentCustomers
       FROM product_docs
+      SETTINGS final = 1
     `;
 
     const prevRevenueQuery = `
@@ -169,6 +173,7 @@ export async function getDashboardKPIs(branchSync?: string[], dateRange?: DateRa
         count() as prevOrders,
         uniq(customer_code) as prevCustomers
       FROM product_docs
+      SETTINGS final = 1
     `;
 
     const [revenueResult, prevRevenueResult] = await Promise.all([
@@ -253,6 +258,7 @@ export async function getBranchDailySummaries(branchSync?: string[], dateRange?:
       FROM product_docs
       GROUP BY branch_sync
       ORDER BY totalSales DESC
+      SETTINGS final = 1
     `;
 
     const result = await clickhouse.query({
@@ -545,6 +551,7 @@ export async function getDashboardAlerts(branchSync?: string[], dateRange?: Date
       )
       GROUP BY branch_sync
       ORDER BY branch_sync
+      SETTINGS final = 1
     `;
 
     // 2. Overstock Items
@@ -568,6 +575,7 @@ export async function getDashboardAlerts(branchSync?: string[], dateRange?: Date
       )
       GROUP BY branch_sync
       ORDER BY branch_sync
+      SETTINGS final = 1
     `;
 
     // 3. Overdue Payments (AR)
@@ -591,6 +599,7 @@ export async function getDashboardAlerts(branchSync?: string[], dateRange?: Date
       )
       GROUP BY branch_sync
       ORDER BY branch_sync
+      SETTINGS final = 1
     `;
 
     const queryParams = {

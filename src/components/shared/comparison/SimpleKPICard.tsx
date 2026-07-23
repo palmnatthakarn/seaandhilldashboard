@@ -11,7 +11,6 @@ export interface SimpleKPICardProps {
   barColor?: string;
   valueColor?: string;
   format?: 'money' | 'number' | 'percent' | 'decimal' | 'turnover' | 'custom';
-  gradient?: string;
   className?: string;
 }
 
@@ -24,7 +23,6 @@ export function SimpleKPICard({
   barColor = 'bg-indigo-500',
   valueColor,
   format = 'custom',
-  gradient,
   className,
 }: SimpleKPICardProps) {
   
@@ -37,7 +35,6 @@ export function SimpleKPICard({
         if (Math.abs(val) >= 1_000) return `฿${(val / 1_000).toFixed(1)}K`;
         return `฿${val.toFixed(0)}`;
       case 'number': {
-        const hasDecimals = val % 1 !== 0;
         return val.toLocaleString('th-TH', { 
           minimumFractionDigits: 2,
           maximumFractionDigits: 2 

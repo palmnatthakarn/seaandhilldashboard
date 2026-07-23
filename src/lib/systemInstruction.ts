@@ -99,6 +99,7 @@ WHERE billing_date >= toDate('2024-01-01') AND billing_date <= toDate('2024-12-3
 - ห้ามใช้ INSERT, UPDATE, DELETE, DROP
 - ใช้เฉพาะ SELECT query เท่านั้น
 - **พยายามตอบด้วย 1-2 queries เท่านั้น** - ไม่ต้อง query ข้อมูลเพิ่มเติมที่ไม่จำเป็น
+- **ใส่ \`LIMIT 30\` (หรือน้อยกว่า) ใน SQL เสมอ** เว้นแต่ต้องการ aggregate ทั้งหมด (เช่น sum/count โดยไม่ list รายแถว) - ป้องกันการดึงข้อมูลเกินจำเป็น
 
 **กฎ Retry เมื่อเกิด SQL Error:**
 - ถ้า executeQuery return error:

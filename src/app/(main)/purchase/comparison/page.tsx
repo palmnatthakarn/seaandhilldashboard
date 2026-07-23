@@ -5,14 +5,14 @@ import { useDateRangeStore } from '@/store/useDateRangeStore';
 import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
-import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { ComparisonDateFilter } from '@/components/shared/comparison/ComparisonDateFilter';
+import { KPIGrid } from '@/components/shared/comparison/SimpleKPICard';
 import {
   ShoppingBag, Package, FileText, Users, CreditCard, BarChart3,
   TrendingUp, Building2, Trophy, Medal, Award,
   Receipt, AlertCircle,
 } from 'lucide-react';
-import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
+import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
 import { cn } from '@/lib/utils';
 import type { PurchaseKPIs, TopSupplier, PurchaseTrendData, PurchaseByCategory, APOutstanding } from '@/lib/data/types';
 
@@ -33,6 +33,16 @@ interface BranchPurchaseData {
   apOverdue: number;
   itemsPurchased: number;
 }
+
+interface AxisTooltipItem {
+  axisValue?: string;
+  color: string;
+  name: string;
+  seriesName: string;
+  value: number;
+}
+
+type AxisTooltipParams = AxisTooltipItem[];
 
 /* ═══════════════════════════════════════════════
    Main Page
@@ -323,7 +333,7 @@ export default function PurchaseComparisonPage() {
                     borderColor: '#e2e8f0',
                     textStyle: { color: '#1e293b', fontSize: 12 },
                     extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                    formatter: (params: any) => {
+                    formatter: (params: AxisTooltipParams) => {
                       const p = params[0];
                       return `<div style="font-weight:600;margin-bottom:4px;">${p.name}</div><div>${p.seriesName}: ${fmt(p.value)}</div>`;
                     },
@@ -378,9 +388,9 @@ export default function PurchaseComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                      formatter: (params: any) => {
+                      formatter: (params: AxisTooltipParams) => {
                         let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-                        params.forEach((p: any) => {
+                        params.forEach((p) => {
                           const val = p.seriesName === 'จำนวน PO'
                             ? Math.round(p.value).toLocaleString('th-TH')
                             : fmt(p.value);
@@ -495,9 +505,9 @@ export default function PurchaseComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                      formatter: (params: any) => {
+                      formatter: (params: AxisTooltipParams) => {
                         let html = `<div class="font-semibold mb-1">${params[0].axisValue}</div>`;
-                        params.forEach((p: any) => {
+                        params.forEach((p) => {
                           html += `<div style="display:flex;align-items:center;gap:6px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
                         });
                         return html;
@@ -560,9 +570,9 @@ export default function PurchaseComparisonPage() {
                       borderColor: '#e2e8f0',
                       textStyle: { color: '#1e293b', fontSize: 12 },
                       extraCssText: 'box-shadow: 0 4px 12px rgb(0 0 0 / 0.08); border-radius: 8px;',
-                      formatter: (params: any) => {
+                      formatter: (params: AxisTooltipParams) => {
                         let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-                        params.forEach((p: any) => {
+                        params.forEach((p) => {
                           html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
                         });
                         return html;

@@ -5,11 +5,11 @@ import { useDateRangeStore } from '@/store/useDateRangeStore';
 import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
-import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { ComparisonDateFilter } from '@/components/shared/comparison/ComparisonDateFilter';
+import { KPIGrid } from '@/components/shared/comparison/SimpleKPICard';
 import {
-  DollarSign, TrendingUp, TrendingDown, ShoppingCart, Package, BarChart3, AlertCircle,
-  Users, Award, Trophy, Medal, Building2, Percent, Layers, UserCheck,
+  DollarSign, TrendingUp, TrendingDown, ShoppingCart, Package, BarChart3,
+  Users, Award, Trophy, Medal, Building2, Percent, Layers,
   Receipt, CreditCard,
 } from 'lucide-react';
 import { BRANCH_PALETTE, fmt, fmtShort, fmtNum, fmtK, shortName, GrowthBadge, SectionHeader, BranchDot } from '@/lib/comparisonUtils';
@@ -41,6 +41,21 @@ interface BranchSalesData {
   topCustomers: TopCustomer[];
   arStatus: ARStatus[];
   trendData: SalesTrendData[];
+}
+
+interface AxisTooltipItem {
+  axisValue?: string;
+  color: string;
+  seriesName: string;
+  value: number;
+}
+
+type AxisTooltipParams = AxisTooltipItem[];
+
+interface PieTooltipItem {
+  name: string;
+  percent: number;
+  value: number;
 }
 
 
@@ -148,10 +163,10 @@ export default function SalesComparisonPage() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
+      formatter: (params: AxisTooltipParams) => {
         const name = params[0]?.axisValue || '';
         let html = `<div style="font-weight:600;margin-bottom:4px">${name}</div>`;
-        params.forEach((p: any) => {
+        params.forEach((p) => {
           html += `<div style="display:flex;align-items:center;gap:6px"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
         });
         return html;
@@ -169,7 +184,7 @@ export default function SalesComparisonPage() {
 
   /* 2. Sales Share - Donut Pie */
   const salesShareChart = useMemo(() => ({
-    tooltip: { trigger: 'item', formatter: (params: any) => `<div style="font-weight:600;margin-bottom:4px">${params.name}</div><div>${fmt(params.value)} (${params.percent.toFixed(1)}%)</div>` },
+    tooltip: { trigger: 'item', formatter: (params: PieTooltipItem) => `<div style="font-weight:600;margin-bottom:4px">${params.name}</div><div>${fmt(params.value)} (${params.percent.toFixed(1)}%)</div>` },
     legend: { orient: 'vertical', right: 10, top: 'center', textStyle: { fontSize: 11 } },
     series: [{
       type: 'pie',
@@ -191,9 +206,9 @@ export default function SalesComparisonPage() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
-      formatter: (params: any) => {
+      formatter: (params: AxisTooltipParams) => {
         let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-        params.forEach((p: any) => {
+        params.forEach((p) => {
           html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${Number(p.value).toFixed(2)}%</div>`;
         });
         return html;
@@ -217,9 +232,9 @@ export default function SalesComparisonPage() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'cross' },
-      formatter: (params: any) => {
+      formatter: (params: AxisTooltipParams) => {
         let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-        params.forEach((p: any) => {
+        params.forEach((p) => {
           const val = p.seriesName === 'จำนวนออเดอร์'
             ? Math.round(p.value).toLocaleString('th-TH')
             : fmt(p.value);
@@ -250,9 +265,9 @@ export default function SalesComparisonPage() {
     return {
       tooltip: {
         trigger: 'axis',
-        formatter: (params: any) => {
+        formatter: (params: AxisTooltipParams) => {
           let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-          params.forEach((p: any) => {
+          params.forEach((p) => {
             html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
           });
           return html;
@@ -299,9 +314,9 @@ export default function SalesComparisonPage() {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        formatter: (params: any) => {
+        formatter: (params: AxisTooltipParams) => {
           let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-          params.forEach((p: any) => {
+          params.forEach((p) => {
             if (p.value > 0) html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
           });
           return html;

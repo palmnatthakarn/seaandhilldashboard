@@ -5,8 +5,8 @@ import { useDateRangeStore } from '@/store/useDateRangeStore';
 import ReactECharts from 'echarts-for-react';
 import { motion } from 'framer-motion';
 import { useComparison } from '@/lib/ComparisonContext';
-import { ComparisonDateFilter } from '@/components/comparison/ComparisonDateFilter';
-import { KPIGrid } from '@/components/comparison/SimpleKPICard';
+import { ComparisonDateFilter } from '@/components/shared/comparison/ComparisonDateFilter';
+import { KPIGrid } from '@/components/shared/comparison/SimpleKPICard';
 import {
   Package, AlertTriangle, AlertCircle, BarChart3,
   TrendingUp, RefreshCw, Clock, Boxes,
@@ -48,6 +48,16 @@ interface BranchInventoryData {
   aging61to90: number;
   aging90plus: number;
 }
+
+interface AxisTooltipItem {
+  axisValue?: string;
+  color: string;
+  name: string;
+  seriesName: string;
+  value: number;
+}
+
+type AxisTooltipParams = AxisTooltipItem[];
 
 /* ═══════════════════════════════════════════════
    Main Page
@@ -180,10 +190,10 @@ export default function InventoryComparisonPage() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
+      formatter: (params: AxisTooltipParams) => {
         const name = params[0]?.axisValue || '';
         let html = `<div style="font-weight:600;margin-bottom:4px;">${name}</div>`;
-        params.forEach((p: any) => {
+        params.forEach((p) => {
           html += `<div style="display:flex;align-items:center;gap:6px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
         });
         return html;
@@ -201,7 +211,7 @@ export default function InventoryComparisonPage() {
 
   /* 2. Turnover Rate Comparison - Horizontal Bar */
   const turnoverChart = useMemo(() => ({
-    tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].name}: ${params[0].value.toFixed(2)}x` },
+    tooltip: { trigger: 'axis', formatter: (params: AxisTooltipParams) => `${params[0].name}: ${params[0].value.toFixed(2)}x` },
     grid: { top: 10, right: 40, bottom: 20, left: 10, containLabel: true },
     xAxis: { type: 'value', axisLabel: { formatter: '{value}x' } },
     yAxis: { type: 'category', data: [...data].reverse().map(b => shortName(b.branchName)), axisLabel: { fontSize: 10 } },
@@ -220,9 +230,9 @@ export default function InventoryComparisonPage() {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: any) => {
+      formatter: (params: AxisTooltipParams) => {
         let html = `<div style="font-weight:600;margin-bottom:4px;">${params[0].axisValue}</div>`;
-        params.forEach((p: any) => {
+        params.forEach((p) => {
           html += `<div style="display:flex;align-items:center;gap:6px;margin-top:2px;"><span style="background:${p.color};width:10px;height:10px;border-radius:2px;display:inline-block;"></span>${p.seriesName}: ${fmt(p.value)}</div>`;
         });
         return html;
